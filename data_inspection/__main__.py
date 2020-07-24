@@ -51,12 +51,30 @@ single_cols = {
                'MRI 1 -  Pulse ox results': True, # note the extra space
                'MRI 2 - Pulse ox results': True,
                'MRI 3 - Pulse ox results': True,
-               'MCV': True
+               'MCV': True,
+               'Receiving regular blood transfusions': True,
+               r'Initial hemoglobin S% (pretransfusion if applicable)': True,
+               r'Results': True, # this is posttransfusion HbS%, and it's amazing it's the only column with this name
+               r'MRI 1 - SBP': True,
+               r'MRI 1 - DBP': True,
+               r'MRI 2 - SBP': True,
+               r'MRI 2 - DBP': True,
+               r'MRI 3 - SBP': True,
+               r'MRI 3 - DBP': True,
                }
 
 # 2d relationships we want to use to check for outliers. [independent, dependent]
 # numeric data only pls
-double_cols = [['Specify total HU daily dosage (mg)', 'MCV']]
+double_cols = [['Specify total HU daily dosage (mg)', 'MCV'],
+               ['Specify total HU daily dosage (mg)', 'Initial hemoglobin S% (pretransfusion if applicable)'],
+               ['Age', 'MRI 1 - SBP'],
+               ['Age', 'MRI 1 - DBP'],
+               ['Age', 'MRI 2 - SBP'],
+               ['Age', 'MRI 2 - DBP'],
+               ['Age', 'MRI 3 - SBP'],
+               ['Age', 'MRI 3 - DBP']]
+
+contam = 0.07 # estimated % of data that are outliers
 
 np.random.seed(1)
 
@@ -67,6 +85,7 @@ np.random.seed(1)
 mono_folder = os.path.join(out_folder, 'mono')
 bi_folder = os.path.join(out_folder, 'bi')
 # multi_folder = os.path.join(out_folder, 'multi')
+custom_folder = os.path.join(out_folder, 'custom')
 
 overview_report = os.path.join(out_folder, 'overview.txt')
 missing_data_report = os.path.join(out_folder, 'missing_data.csv')
@@ -94,6 +113,7 @@ log = open(log_file, 'w')
 os.mkdir(mono_folder)
 os.mkdir(bi_folder)
 # os.mkdir(multi_folder)
+os.mkdir(custom_folder)
 
 df = pd.read_csv(data_path, sep='|', low_memory=False, dtype={study_id_col:'object'})
 
@@ -200,7 +220,7 @@ for ind_col, dep_col in double_cols:
         
         data = np.array( [np.array( [a,b] ) for a,b,c in zip(x,y,pt_id) if all([not np.isnan(a), not(np.isnan(b))]) ] )
         pts = [ c for a,b,c in zip(x,y,pt_id) if all([not np.isnan(a), not(np.isnan(b))]) ]
-        clf = IsolationForest(max_samples='auto', random_state=1, contamination=0.05)
+        clf = IsolationForest(max_samples='auto', random_state=1, contamination=contam)
         preds = clf.fit_predict(data)
         
         x = data[:,0]
@@ -226,8 +246,62 @@ for ind_col, dep_col in double_cols:
         
 # figure out which columns are numeric
 numeric_cols = [c for c in df.columns if df[c].dtype != 'object']
+
+
+
+###### custom analyses
+
+# see whose HbS actually increased postransfusion
+
+fig_name = os.path.join(custom_folder, f'anomalous_posttransfusion_HbS_increases.png')
+plt.figure(figsize=(8,30))
+plt.title(r'Post- vs. Pre-transfusion HbS %')
+plt.xlabel(r'Transfusion status')
+plt.ylabel(r'% HbS')
+
+text_size = 7
+for status, pre, post, pt in zip(df['Receiving regular blood transfusions'], df['Initial hemoglobin S% (pretransfusion if applicable)'], df['Results'], df[study_id_col]):
+    if status == 'No':
+        continue
     
+    if pd.isnull(post) and not pd.isnull(pre):
+        bad = -1
+        col='orange'
+        al = 1
+    elif post >= pre:
+        bad = 2
+        col ='red'
+        al = 1
+    elif post >= pre*.9:
+        bad = 1
+        col = 'blue'
+        al = 1
+    else:
+        bad = 0
+        col = 'green'
+        al = 0.2
     
+    exes = [0,1]
+    whys = [pre,post]
+    
+    plt.scatter(exes, whys, color=col, alpha=al)
+    plt.plot(exes, whys, color=col, alpha=al)
+    
+    if bad >= 1:
+        plt.annotate(pt, (exes[1]+0.02, whys[1]), size=text_size)
+    if bad == -1:
+        plt.annotate(pt, (exes[0]-0.05, whys[0]), size=text_size)
+    
+norm_artist = plt.Circle((0,0), color='green')
+bad_artist = plt.Circle((0,0), color='blue')
+vbad_artist = plt.Circle((0,0), color='red')
+missing_artist = plt.Circle((0,0), color='orange')
+plt.legend((norm_artist, bad_artist, vbad_artist, missing_artist),
+           ('Normal', 'HbS reduction <10%', 'HbS constancy or increase', 'No post-transfusion value'))
+plt.xlim(-0.2,1.2)
+plt.ylim(0,100)
+plt.savefig(fig_name)
+plt.close()
     
 log.close()
     
