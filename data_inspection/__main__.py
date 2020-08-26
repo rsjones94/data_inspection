@@ -21,12 +21,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn import preprocessing
 
 from support import is_empty, numbery_string_to_number
 
 
-data_path = r'/Users/manusdonahue/Documents/Sky/SCD_pt_data_labels_piped.csv'
-out_folder = r'/Users/manusdonahue/Documents/Sky/data_inspection/analysis' # should not exist
+data_path = r'/Users/skyjones/Documents/inspection/SCD_pt_data_labels_piped.csv'
+out_folder = r'/Users/skyjones/Documents/inspection/analysis' # should not exist
 
 # column that contains the unique deidentified patient ID
 study_id_col = 'Study ID'
@@ -76,6 +78,8 @@ double_cols = [['Specify total HU daily dosage (mg)', 'MCV'],
 
 contam = 0.07 # estimated % of data that are outliers
 
+text_size = 7
+
 np.random.seed(1)
 
 #######################################
@@ -84,7 +88,7 @@ np.random.seed(1)
 
 mono_folder = os.path.join(out_folder, 'mono')
 bi_folder = os.path.join(out_folder, 'bi')
-# multi_folder = os.path.join(out_folder, 'multi')
+multi_folder = os.path.join(out_folder, 'multi')
 custom_folder = os.path.join(out_folder, 'custom')
 
 overview_report = os.path.join(out_folder, 'overview.txt')
@@ -112,10 +116,11 @@ log = open(log_file, 'w')
     
 os.mkdir(mono_folder)
 os.mkdir(bi_folder)
-# os.mkdir(multi_folder)
+os.mkdir(multi_folder)
 os.mkdir(custom_folder)
 
-df = pd.read_csv(data_path, sep='|', low_memory=False, dtype={study_id_col:'object'})
+sep = '|'
+df = pd.read_csv(data_path, sep=sep, low_memory=False, dtype={study_id_col:'object'})
 
 problem_pts_cols = [study_id_col]
 problem_pts_cols.extend(single_cols.keys())
@@ -167,7 +172,7 @@ for col in single_cols:
     plt.savefig(fig_name)
     plt.close()
 
-    print(f'Evaluating completeness')
+    print('Evaluating completeness')
     for i, row in df.iterrows():
         # explicit comparisons of bools needed because we are exploiting the ability to mix key datatypes
         if not is_empty(row[col]):
@@ -242,24 +247,122 @@ for ind_col, dep_col in double_cols:
         plt.close()
         continue
     
+    
 ###### multivariate outlier detection
-        
+print('\nRunning multivariate outlier analysis')
+
+multifile = os.path.join(multi_folder, 'multivariate_detection.png')
+multicolsfile = os.path.join(multi_folder, 'multivariate_cols.csv')
+multisubsetfile = os.path.join(multi_folder, 'multivariate_subset.csv')
+
+dump_folder = os.path.join(multi_folder, 'bin')
+os.mkdir(dump_folder)
+
+include_thresh = 0.3 # the minimum percentage of non-nan entries a column must have to be included in the multivariate analysis
+    
 # figure out which columns are numeric
+exes = df[study_id_col]
+
 numeric_cols = [c for c in df.columns if df[c].dtype != 'object']
+numeric_cols = [n for n in numeric_cols if len(df[n].unique()) > 1] # has to not just be NaN
+numeric_cols = [n for n in numeric_cols if 'Accession' not in n]
+
+numeric_cols_nonthreshed = numeric_cols.copy()
+
+numeric_cols = [n for n in numeric_cols if sum(~df[n].isna()) / len(df) > include_thresh] # has to have more non-NaN than the threshold
+
+
+multidata = df[numeric_cols]
+multidata_filled = multidata.fillna(multidata.mean())
+
+# normalize the data
+x = multidata_filled.values #returns a numpy array
+min_max_scaler = preprocessing.MinMaxScaler()
+x_scaled = min_max_scaler.fit_transform(x)
+multidata_filled = pd.DataFrame(x_scaled)
+
+clf = LocalOutlierFactor(n_neighbors=20, contamination=contam)
+
+y_pred = clf.fit_predict(multidata_filled)
+y_pred_unsort = y_pred.copy()
+x_scores = clf.negative_outlier_factor_
+x_scores_unsort = x_scores.copy()
+
+exes, y_pred, x_scores = zip(*sorted(zip(exes, y_pred, x_scores), key=lambda pair: pair[2]))
+
+filt_exes = [x for x,p in zip(exes, y_pred) if p == -1]
+filt_scores = [x for x,p in zip(x_scores, y_pred) if p == -1]
+
+index = np.arange(0, len(filt_scores), step=1)
+
+
+fig = plt.figure()
+plt.title(f'Multivariate outlier detection\n(n columns more than {include_thresh} filled = {len(numeric_cols)})')
+plt.scatter(index, filt_scores)
+plt.ylabel('Outlier factor')
+plt.xlabel('Rank')
+plt.xticks(index, index)
+
+for pt, x, y in zip(filt_exes, index, filt_scores):
+    plt.annotate(pt, (x,y), verticalalignment='top', size=text_size)
+
+plt.savefig(multifile)
+plt.close()
+
+out_cols = pd.Series(numeric_cols)
+out_cols.to_csv(multicolsfile)
+
+id_and_num = [study_id_col]
+id_and_num.extend(numeric_cols)
+out_multi = df[id_and_num]
+out_multi.insert(1, 'abnormal', y_pred_unsort)
+out_multi.insert(1, 'outlier_factor', x_scores_unsort)
+out_multi = out_multi[out_multi['abnormal'] == -1]
+
+out_multi.to_csv(multisubsetfile)
+
+print('Dumping numeric plots')
+
+for col in numeric_cols_nonthreshed:
+    print(f'Dumping: {col}')
+    data = df[col]
+    pts = df[study_id_col]
+    plt.figure(figsize=(8,12))
+    
+    data_drop = data.dropna()
+    plt.title(f'{col}\n(n = {len(data_drop)})')
+    result = plt.boxplot(data_drop, notch=True)
+    plt.ylabel('Value')
+    points = result['fliers'][0].get_data()
+    exes = points[0]+.01
+    whys = points[1]
+    for x,y in zip(exes,whys):
+        matches = pts[data == y]
+        label = ''
+        for m in matches:
+            label += f'{m} + '
+        label = label[:-3]
+        plt.annotate(label, (x,y), fontsize=text_size)
+        
+    scrub_col = col.replace('/', '-') # replace slashes with dashes to protect filepath
+    fig_name = os.path.join(dump_folder, f'{scrub_col}.png')
+    plt.savefig(fig_name)
+    plt.close()
 
 
 
 ###### custom analyses
+print('\nRunning custom analyses')
 
 # see whose HbS actually increased postransfusion
 
-fig_name = os.path.join(custom_folder, f'anomalous_posttransfusion_HbS_increases.png')
+fig_name = os.path.join(custom_folder, r'anomalous_posttransfusion_HbS_increases.png')
 plt.figure(figsize=(8,30))
 plt.title(r'Post- vs. Pre-transfusion HbS %')
 plt.xlabel(r'Transfusion status')
 plt.ylabel(r'% HbS')
 
-text_size = 7
+
 for status, pre, post, pt in zip(df['Receiving regular blood transfusions'], df['Initial hemoglobin S% (pretransfusion if applicable)'], df['Results'], df[study_id_col]):
     if status == 'No':
         continue
