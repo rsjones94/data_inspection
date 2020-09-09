@@ -16,18 +16,18 @@ import numpy as np
 in_csv = '/Users/manusdonahue/Documents/Sky/brain_volume_cleaning/brain_volumes.csv'
 out_csv = '/Users/manusdonahue/Documents/Sky/brain_volume_cleaning/brain_volumes_calculated.csv'
 
-seg_ext = '_3D_brain_seg.nii.gz' # scan id + seg_ext = the segmentation file
-in_folder = 'Processed' # subfolder the segmentation file is in
+seg_ext = 'pveseg.nii.gz' # scan id + seg_ext = the segmentation file
+in_folder = 'FAST' # subfolder the segmentation file is in
 
 # parent folder that house the scan folders
-filefolder = '/Volumes/DonahueDataDrive/Data_sort/SCD_Grouped'
+filefolder = '/Users/manusdonahue/Documents/Sky/brain_volumes/'
 
 
 ######
 
 
 study_id_col = 'study_id'
-mr_id_cols = ['mr1_mr_id', 'mr2_mr_id', 'mr3_mr_id']
+mr_id_cols = ['mr1_mr_id_real', 'mr2_mr_id_real', 'mr3_mr_id_real']
 
 cols_of_interest = [study_id_col]
 cols_of_interest.extend(mr_id_cols)
@@ -105,10 +105,12 @@ for i, row in df.iterrows():
                 print(f'{mr} is g2g')
         """
         
-        seg_files = glob(os.path.join(cand,'**', f'*{seg_ext}'), recursive=True)
+        globular = os.path.join(cand,'**', f'*{seg_ext}')
+        seg_files = glob(globular, recursive=True)
         
         if len(seg_files) != 1:
             print(f'{len(seg_files)} found for segmentations for {mr}. Skipping!!!\n({seg_files})')
+            print(globular)
             continue
         else:
             seg_file = seg_files[0]
@@ -125,6 +127,8 @@ for i, row in df.iterrows():
         
         # 1 = csf, 2 = gm, 3 = wm
         
+        
+        # use partial voluems for calculation
         seg_types = {1: 'csf', 2: 'grey', 3:'white'}
         
         total_vol = int(img[img > 0].sum() * voxel_vol)
@@ -143,12 +147,14 @@ for i, row in df.iterrows():
                 continue
             
             subnum = num-1
-            subseg_file = glob(os.path.join(cand,'**', f'*pve_{subnum}.nii.gz'), recursive=True)[0]
+            # subseg_file = glob(os.path.join(cand,'**', f'*pve_{subnum}.nii.gz'), recursive=True)[0] # uncomment this line to use partial volume estimates (1 of 2)
+            subseg_file = glob(os.path.join(cand,'**', f'*pveseg.nii.gz'), recursive=True)[0] # uncomment this line to use discrete volume estimates (1 of 2)
             subraw = nib.load(subseg_file)
             subim = subraw.get_fdata()
             
             #vol = int((img==num).sum() * voxel_vol)
-            vol = int(subim.sum() * voxel_vol)
+            vol = int(subim.sum() * voxel_vol) # uncomment this line to use partial volume estimates (2 of 2)
+            vol = int((subim==num).sum() * voxel_vol) # uncomment this line to use discrete volume estimates (2 of 2)
             
             if orig != vol:
                 print(f'{mr} has a new value for {matter_type} ({orig} --> {vol})')

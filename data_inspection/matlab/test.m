@@ -1,0 +1,1 @@
+parrec_to_nii('/Users/manusdonahue/Documents/Sky/brain_volumes/SCD_K030/bin/KNIGHT^KALIA^N^_WIP_T1W_3D_TFE_SENSE_17_1.PAR', '/Users/manusdonahue/Documents/Sky/brain_volumes/SCD_K030/bin/tester.nii.gz')
