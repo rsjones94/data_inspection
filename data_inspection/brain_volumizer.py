@@ -25,6 +25,8 @@ filefolder = '/Users/manusdonahue/Documents/Sky/brain_volumes/'
 
 ######
 
+np.random.seed(0)
+
 
 study_id_col = 'study_id'
 mr_id_cols = ['mr1_mr_id_real', 'mr2_mr_id_real', 'mr3_mr_id_real']
@@ -147,14 +149,14 @@ for i, row in df.iterrows():
                 continue
             
             subnum = num-1
-            # subseg_file = glob(os.path.join(cand,'**', f'*pve_{subnum}.nii.gz'), recursive=True)[0] # uncomment this line to use partial volume estimates (1 of 2)
-            subseg_file = glob(os.path.join(cand,'**', f'*pveseg.nii.gz'), recursive=True)[0] # uncomment this line to use discrete volume estimates (1 of 2)
+            subseg_file = glob(os.path.join(cand,'**', f'*pve_{subnum}.nii.gz'), recursive=True)[0] # uncomment this line to use partial volume estimates (1 of 2)
+            # subseg_file = glob(os.path.join(cand,'**', f'*pveseg.nii.gz'), recursive=True)[0] # uncomment this line to use discrete volume estimates (1 of 2)
             subraw = nib.load(subseg_file)
             subim = subraw.get_fdata()
             
             #vol = int((img==num).sum() * voxel_vol)
             vol = int(subim.sum() * voxel_vol) # uncomment this line to use partial volume estimates (2 of 2)
-            vol = int((subim==num).sum() * voxel_vol) # uncomment this line to use discrete volume estimates (2 of 2)
+            #vol = int((subim==num).sum() * voxel_vol) # uncomment this line to use discrete volume estimates (2 of 2)
             
             if orig != vol:
                 print(f'{mr} has a new value for {matter_type} ({orig} --> {vol})')
