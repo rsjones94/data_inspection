@@ -11,7 +11,7 @@ from glob import glob
 in_folder = '/Users/manusdonahue/Documents/Sky/volume_testing/'
 subjects_folder = os.environ['SUBJECTS_DIR']
 prefixes = ['/Users/skyjones/Documents/volume_testing', '/Users/manusdonahue/Documents/Sky/volume_testing']
-split_point = 0.6
+split_point = 0.4
 
 out_txts = ['/Users/manusdonahue/Desktop/subject_list_mine.txt', '/Users/manusdonahue/Desktop/subject_list_perom.txt']
 
