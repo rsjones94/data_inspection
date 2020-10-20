@@ -17,13 +17,13 @@ import numpy as np
 import shutil
 
 
-out_csv = '/Users/manusdonahue/Documents/Sky/volume_testing/volume_comparisons.csv'
+out_csv = '/Users/manusdonahue/Documents/Sky/volume_testing/volume_comparisons_fastonly.csv'
 in_folder = '/Users/manusdonahue/Documents/Sky/volume_testing'
 
 
 run_fast = True
-run_sienax = True
-run_freesurfer = True
+run_sienax = False
+run_freesurfer = False
 
 over_fast = False
 over_sienax = False
@@ -38,22 +38,16 @@ subjects_dir = os.environ['SUBJECTS_DIR']
 folders = np.array(glob(os.path.join(in_folder, '*/'))) # list of all possible subdirectories
 #folders = folders[np.random.choice(len(folders), size=10, replace=False)]
 
+"""
+pts_of_interest = []
 
-pts_of_interest = ['SCD_TRANSP_P001_01',
-                   'SCD_TRANSP_P001_02',
-                   'SCD_P004_01',
-                   'SCD_P004_02',
-                   'SCD_TRANSP_P005_01',
-                   'SCD_TRANSP_P005_02',
-                   'SCD_P035_01',
-                   'SCD_P035_02',
-                   'SCD_P009_01',
-                   'SCD_P009_02',
-                   'SCD_P013_01',
-                   'SCD_P013_02']
+li = [['SCD_P004_01', 'SCD_P004_02'], ['SCD_P009_01', 'SCD_P009_02'], ['SCD_P013_01', 'SCD_P013_02'], ['SCD_P017_01', 'SCD_P017_02'], ['SCD_P022_01', 'SCD_P022_02'], ['SCD_P023_01', 'SCD_P023_02'], ['SCD_P031_01', 'SCD_P031_02'], ['SCD_P032_01', 'SCD_P032_02'], ['SCD_P035_01', 'SCD_P035_02'], ['SCD_P036_01', 'SCD_P036_02'], ['SCD_TRANSF_K007_01', 'SCD_TRANSF_K007_02'], ['SCD_TRANSF_K008_01', 'SCD_TRANSF_K008_02'], ['SCD_TRANSF_K018_01', 'SCD_TRANSF_K018_02'], ['SCD_TRANSF_P001_01', 'SCD_TRANSF_P001_02'], ['SCD_TRANSF_P002_01', 'SCD_TRANSF_P002_02'], ['SCD_TRANSF_P003_01', 'SCD_TRANSF_P003_02'], ['SCD_TRANSF_P008_01', 'SCD_TRANSF_P008_02'], ['SCD_TRANSF_P009_01', 'SCD_TRANSF_P009_02'], ['SCD_TRANSF_P013_01', 'SCD_TRANSF_P013_02'], ['SCD_TRANSF_P017_01', 'SCD_TRANSF_P017_02'], ['SCD_TRANSF_P019_01', 'SCD_TRANSF_P019_02'], ['SCD_TRANSP_P001_01', 'SCD_TRANSP_P001_02'], ['SCD_TRANSP_P003_01', 'SCD_TRANSP_P003_02'], ['SCD_TRANSP_P004_01', 'SCD_TRANSP_P004_02'], ['SCD_TRANSP_P005_01', 'SCD_TRANSP_P005_02'], ['SCD_TRANSP_P008_01', 'SCD_TRANSP_P008_02']]
+for subl in li:
+    pts_of_interest.extend(subl)
+
 
 folders = [os.path.join(in_folder, i) for i in pts_of_interest]
-
+"""
 
 def get_terminal(path):
     """

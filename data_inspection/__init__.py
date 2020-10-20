@@ -5,3 +5,4 @@ tells Python that this is a package
 """
 
 from support import *
+from parse_fs_stats import *

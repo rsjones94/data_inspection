@@ -8,10 +8,10 @@ a number of text files split between specified prefixes
 import os
 from glob import glob
 
-in_folder = '/Users/manusdonahue/Documents/Sky/volume_testing/'
+pt_file = '/Users/manusdonahue/Desktop/pts.txt'
 subjects_folder = os.environ['SUBJECTS_DIR']
 prefixes = ['/Users/skyjones/Documents/volume_testing', '/Users/manusdonahue/Documents/Sky/volume_testing']
-split_point = 0.4
+split_point = 1 # between 0 and 1
 
 out_txts = ['/Users/manusdonahue/Desktop/subject_list_mine.txt', '/Users/manusdonahue/Desktop/subject_list_perom.txt']
 
@@ -33,10 +33,11 @@ def get_terminal(path):
     return os.path.basename(os.path.normpath(path))
 
 
-pt_folders = glob(os.path.join(in_folder, '*/'))
+#pt_folders = glob(os.path.join(in_folder, '*/'))
 freesurfer_folders = glob(os.path.join(subjects_folder, '*/'))
 
-pt_ids = [get_terminal(i) for i in pt_folders]
+fi = open(pt_file).readlines()
+pt_ids = [get_terminal(i.strip()) for i in fi]
 freesurfer_ids = [get_terminal(i) for i in freesurfer_folders]
 
 still_left = [i for i in pt_ids if i not in freesurfer_ids]
