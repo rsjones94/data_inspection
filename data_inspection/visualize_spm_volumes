@@ -23,28 +23,36 @@ from sklearn.linear_model import LinearRegression
 from sklearn import preprocessing
 import scipy
 import statsmodels.api as sm
+import redcap
 
 from matplotlib.patches import Circle
 from matplotlib.offsetbox import (TextArea, DrawingArea, OffsetImage,
                                   AnnotationBbox)
 from matplotlib.cbook import get_sample_data
+import matplotlib
 
 from parse_fs_stats import parse_freesurfer_stats
 
-exclude_pts = []
+exclude_pts = ['SCD_C011_01', 'SCD_K003', 'SCD_K033_02', 'SCD_K061', 'SCD_K065',
+               'SCD_P007', 'SCD_P008', 'SCD_P009_01', 'SCD_P010_01', 'SCD_P012', 'SCD_P014'
+               'SCD_P019', 'SCD_P021', 'SCD_TRANSF_P006_01', 'SCD_TRANSF_P007_01']
 
 in_csv = '/Users/manusdonahue/Documents/Sky/stroke_status.csv'
 out_folder = '/Users/manusdonahue/Documents/Sky/spm_volume_visualization/'
+quality_folder =  '/Users/manusdonahue/Documents/Sky/spm_volume_visualization/quality'
 parsed_folder = '/Users/manusdonahue/Documents/Sky/spm_volume_visualization/parsed'
+
+lesion_mask_folder = '/Users/manusdonahue/Documents/Sky/brain_lesion_masks/combined/'
 
 brain_vol_csv = '/Users/manusdonahue/Documents/Sky/normal_brain_vols.csv' # from Borzage, Equations to describe brain size across the continuum of human lifespan (2012)
 # values originally reported as mass in g, converted to cc assuming rho = 1.04 g/cc
 
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
-parse = True
-collate = True
-visualize = False 
+parse = False
+collate = False
+quality_check = False
+visualize = True 
 
 # os.path.basename(os.path.normpath(path))
 
@@ -124,7 +132,7 @@ def filter_zeroed_axial_slices(nii_data, thresh=0.99):
             near_zero = np.isclose(d,0)
             less_zero = (d <= 0)
             
-            bad_pixels = np.logical_or(near_zero, less_zero)
+            bad_pixels = np.logical_or(near_zero, less_zero)> 5
             
             perc_bad = bad_pixels.sum() / d.size
             
@@ -140,12 +148,14 @@ def filter_zeroed_axial_slices(nii_data, thresh=0.99):
 
 
 files = np.array(glob(os.path.join(spm_folder, '*.nii'))) # list of all niftis
-parent_files = [f for f in files if f[0] != 'c'] # if the nifti starts with c it's a tissue probability map 
+parent_files = [f for f in files if os.path.basename(os.path.normpath(f))[0] != 'c'] # if the nifti starts with c it's a tissue probability map 
+
+in_table_indexed = pd.read_csv(in_csv, index_col='mr1_mr_id_real')
 
 if parse:
     for i, p in enumerate(parent_files):
         
-        mr = os.path.basename(os.path.normpath(p))
+        mr = os.path.basename(os.path.normpath(p))[:-4]
         
         print(f'\nParsing {mr} ({i+1} of {len(parent_files)})')
         
@@ -164,7 +174,7 @@ if parse:
             the_row['short'] = t_type
             the_row['long'] = long
             
-            tissue_file = os.path.join(spm_folder, 'c{t_num}{mr}.nii')
+            tissue_file = os.path.join(spm_folder, f'c{t_num}{mr}.nii')
             
             seg_data = nib.load(tissue_file)
             seg_voxel_vol = np.product(seg_data.header.get_zooms())
@@ -175,7 +185,7 @@ if parse:
             
             the_row['value'] = vol
             
-            df.append(the_row, ignore_index=True)
+            df = df.append(the_row, ignore_index=True)
             
         df.to_csv(parsed_file, index=False)
 
@@ -183,21 +193,34 @@ parsed_csvs = np.array(glob(os.path.join(parsed_folder, '*.csv'))) # list of all
 
 
 if collate:
+    
+    print('Contacting REDCap')
+    api_url = 'https://redcap.vanderbilt.edu/api/'
+    token_loc = '/Users/manusdonahue/Desktop/Projects/redcaptoken_scd_real.txt'
+    token = open(token_loc).read()
+    
+    project = redcap.Project(api_url, token)
+    project_data_raw = project.export_records()
+    project_data = pd.DataFrame(project_data_raw)
+    print('Contacted...')
+    
+    mri_cols = ['mr1_mr_id',
+                'alternate_mr_id_1'
+                ]
+    
     out_csv = os.path.join(out_folder, 'collated.csv')
     out_df = pd.DataFrame()
     blank_dict = {'mr_id':None,
                   'wm_vol':None,
                   'gm_vol':None,
                   'total_vol':None,
-                  'total_vol_custom':None,
-                  'mask_vol_custom':None,
-                  'supratent':None,
-                  'etiv':None,
+                  'icv':None,
                   'csf_vol':None,
                   'gm_normal':None,
                   'wm_normal':None,
                   'total_normal':None,
-                  'supratent_normal':None,
+                  'hct':None,
+                  'ox_delivery':None,
                   'age':None,
                   'stroke_silent':None,
                   'stroke_overt':None,
@@ -206,6 +229,7 @@ if collate:
                   'scd':None,
                   'anemia':None,
                   'control':None,
+                  'lesion_burden':None,
                   'gender':None,
                   'exclude':0}
     for i, csv in enumerate(parsed_csvs):
@@ -215,20 +239,37 @@ if collate:
         working = pd.Series(blank_dict.copy())
         parsed_csv = pd.read_csv(csv, index_col='short')
         
+        # get index in database
+        which_scan = [pt_name in list(project_data[i]) for i in mri_cols]
+        
+        scan_index = which_scan.index(True)
+        scan_mr_col = mri_cols[scan_index]
+        studyid_index_data = project_data.set_index('study_id')
+        
+        inds = studyid_index_data[scan_mr_col] == pt_name
+        cands = studyid_index_data[inds]
+        
+        study_id = cands.index[0]
+        
+        
+        hematocrit = float(cands.iloc[0][f'blood_draw_hct1'])/100
+        working['hct'] = hematocrit
+        
         working['mr_id'] = pt_name
         if pt_name in exclude_pts:
             working['exclude'] = 1
-        working['gm_vol'] = parsed_csv.loc['TotalGrayVol']['value'] / 1e3
-        working['total_vol'] = parsed_csv.loc['BrainSegVolNotVent']['value'] / 1e3
-        working['wm_vol'] = working['total_vol'] - working['gm_vol']
-        working['age'] = in_table_indexed.loc[pt_name]['age']
-        working['etiv'] = parsed_csv.loc['eTIV']['value'] / 1e3
-        working['gm_normal'] = working['gm_vol'] / working['etiv']
-        working['wm_normal'] = working['wm_vol'] / working['etiv']
-        working['total_normal'] = working['total_vol'] / working['etiv']
-        working['supratent'] = parsed_csv.loc['SupraTentorialVolNotVent']['value'] / 1e3
-        working['supratent_normal'] = working['supratent'] / working['etiv']
-        working['csf_vol'] = working['etiv'] - working['total_vol']
+        working['gm_vol'] = parsed_csv.loc['gm']['value'] / 1e3
+        working['wm_vol'] = parsed_csv.loc['wm']['value'] / 1e3
+        working['csf_vol'] = parsed_csv.loc['csf']['value'] / 1e3
+        working['age'] =  float(cands.iloc[0][f'age'])
+        working['total_vol'] = working['gm_vol'] + working['wm_vol']
+        working['icv'] = working['gm_vol'] + working['wm_vol'] + working['csf_vol']
+        
+        working['gm_normal'] = working['gm_vol'] / working['icv']
+        working['wm_normal'] = working['wm_vol'] / working['icv']
+        working['total_normal'] = working['total_vol'] / working['icv']
+        
+        working['ox_delivery'] = float(cands.iloc[0][f'mr1_cao2'])
         
         """
         if in_table_indexed.loc[pt_name]['mri1_wml_drp'] == 1:
@@ -237,26 +278,27 @@ if collate:
             working['white_matter_injury'] = 0
         """
         
-        stroke_overt = in_table_indexed.loc[pt_name]['mh_rf_prior_stroke_overt']
-        stroke_silent = in_table_indexed.loc[pt_name]['mh_rf_prior_stroke_silent']
+        stroke_overt = (cands.iloc[0][f'mh_rf_prior_stroke_overt'])
+        stroke_silent = (cands.iloc[0][f'mh_rf_prior_stroke_silent'])
         
-        if stroke_overt == 1 or stroke_silent == 1:
+        if stroke_overt == 1 or stroke_silent == 1 or stroke_overt == '1' or stroke_silent == '1':
             working['exclude'] = 1
         
-        sci = in_table_indexed.loc[pt_name]['outcome_mri1_sci']
-        transf = in_table_indexed.loc[pt_name]['enroll_sca_transfusion']
+        sci = (cands.iloc[0][f'outcome_mri1_sci'])
+        transf = (cands.iloc[0][f'enroll_sca_transfusion'])
+        
         
         #if transf == 1:
             #working['exclude'] = 1
         
         for val, name in zip([stroke_overt, stroke_silent, sci, transf],
                              ['stroke_overt', 'stroke_silent', 'sci', 'transf']):
-            if val == 1:
+            if val == 1 or val == '1':
                 working[name] = 1
             else:
                 working[name] = 0
                 
-        status = in_table_indexed.loc[pt_name]['case_control']
+        status = int(cands.iloc[0][f'case_control'])
         
         if status == 2:
             working['scd'] = 0
@@ -271,56 +313,108 @@ if collate:
             working['anemia'] = 0
             working['control'] = 1
             
-        working['gender']  = in_table_indexed.loc[pt_name]['gender']
+        working['gender'] = int(cands.iloc[0][f'gender'])
         
-        fs_seg_file = os.path.join(fs_folder, pt_name, 'mri', 'aseg.auto.mgz')
-        fs_brain_file = os.path.join(fs_folder, pt_name, 'mri', 'brain.mgz')
-        
-        seg_data = nib.load(fs_seg_file)
-        brain_data = nib.load(fs_brain_file)
-        
-        seg_voxel_vol = np.product(seg_data.header.get_zooms())
-        brain_voxel_vol = np.product(brain_data.header.get_zooms())
-        
-        seg_mat = seg_data.get_fdata()
-        brain_mat = brain_data.get_fdata()
-        
-        seg_mask = seg_mat > 0
-        brain_mask = brain_mat > 0
-        
-        seg_vol = seg_mask.sum()*seg_voxel_vol
-        brain_vol = brain_mask.sum()*brain_voxel_vol
-        
-        working['total_vol_custom'] = seg_vol / 1e3
-        working['mask_vol_custom'] = brain_vol / 1e3
-        
-        
-        for ind in parsed_csv.index:
-            try: # if the index is an integer (or can be coerced to one) then the value is for a granular segmentation volume
-                num = int(ind)
-                keyname = parsed_csv.loc[ind]['long']
-                val = parsed_csv.loc[ind]['value']
-                working[keyname] = val
-                if keyname not in blank_dict:
-                    blank_dict[keyname] = None
-            except ValueError:
+        # calculate lesion burden
+        if any([working['stroke_overt'], working['stroke_silent'], working['sci']]):
+            burden_mask = os.path.join(lesion_mask_folder, pt_name, 'axFLAIR_mask.nii.gz')
+            try:
+                lesion_data = nib.load(burden_mask)
+                lesion_voxel_vol = np.product(lesion_data.header.get_zooms())
+                lesion_mat = lesion_data.get_fdata()
+                
+                raw_vol = lesion_mat.sum()
+                vol = raw_vol * lesion_voxel_vol
+                
+                working['lesion_burden'] = vol / 1e3
+                
+                if working['lesion_burden'] > 3:
+                    working['exclude'] = 1
+                
+            except FileNotFoundError:
                 pass
-    
+        else:
+            working['lesion_burden'] = 0
+            
+        
         
                 
         out_df = out_df.append(working, ignore_index=True)
     
     out_df = out_df[blank_dict.keys()]
     out_df.to_csv(out_csv, index=False)
+    
+if quality_check:
+    plt.style.use('dark_background')
+    for i, p in enumerate(parent_files):
+        mr = os.path.basename(os.path.normpath(p))[:-4]
+        
+        print(f'\nQuality check {mr} ({i+1} of {len(parent_files)})')
+        
+        # c1 is gm, c2 is wm, c3 is csf
+        tissue_types = ['gm', 'wm', 'csf']
+        tissue_long = ['gray_matter_volume', 'white_matter_volume', 'cerebrospinal_fluid_volume']
+        tissue_numbers = ['c1', 'c2', 'c3']
+        
+        
+        t1_file = os.path.join(spm_folder, f'{mr}.nii')
+        t1_data = nib.load(t1_file)
+        t1_mat = t1_data.get_fdata()
+        t1_shape = t1_mat.shape
+        
+        half_x = int(t1_shape[0] / 2 + 10)
+        half_y = int(t1_shape[1] / 2 + 10)
+        half_z = int(t1_shape[2] / 2 + 10)
+        
+        slice1 = half_x,slice(None),slice(None)
+        slice2 = slice(None),half_y,slice(None)
+        slice3 = slice(None),slice(None),half_z
+        
+        slices = [slice1,slice2,slice3]
+        
+        fig, axs = plt.subplots(2, 3, figsize=(12, 12))
+        figname = os.path.join(quality_folder,f'{mr}.png')
+        
+        cmaps = ['Reds', 'Blues', 'Greens']
+        
+        rots = [2,2,2]
+        
+        for i,axrow in enumerate(axs):
+            for ax, slicer, rot in zip(axrow,slices, rots):
+                ax.axis('off')
+                t1_slice = t1_mat[slicer]
+                t1_slice = np.rot90(t1_slice.T, rot)
+                ax.imshow(t1_slice, cmap=matplotlib.cm.gray)
+            
+                if i == 1:
+                    for t_type, t_num, long, colormap in zip(tissue_types, tissue_numbers, tissue_long, cmaps):
+                        
+                        tissue_file = os.path.join(spm_folder, f'{t_num}{mr}.nii')
+                        tissue_data = nib.load(tissue_file)
+                        tissue_mat = tissue_data.get_fdata()
+                        tissue_slice = tissue_mat[slicer]
+                        tissue_slice = np.rot90(tissue_slice.T, rot)
+                        
+                        tissue_mask = np.ma.masked_where(tissue_slice == 0, tissue_slice)
+                        
+                        ax.imshow(tissue_mask, cmap=colormap, alpha=0.3)
+            
+        plt.tight_layout()
+        fig.savefig(figname)
+        plt.close('all')
+            
+            
+    
         
 if visualize:
+    matplotlib.rcdefaults()
     print('Visualizing')
     brain_vol_df = pd.read_csv(brain_vol_csv)
     
     collated_csv = os.path.join(out_folder, 'collated.csv')
     clean_table = pd.read_csv(collated_csv, index_col='mr_id')
     clean_table = clean_table[clean_table['exclude'] != 1]
-    
+    '''
     clf = LocalOutlierFactor(n_neighbors=20, contamination=0.06)
 
     y_pred = clf.fit_predict(clean_table)
@@ -328,7 +422,8 @@ if visualize:
     x_scores = clf.negative_outlier_factor_
     #x_scores_unsort = x_scores.copy()
     clean_table['outlier'] = y_pred
-        
+    '''
+    
     clean_table['normal_control'] = [all([i, not j]) for i,j in zip(clean_table['control'], clean_table['sci'])]        
     clean_table['sci_control'] = [all([i, j]) for i,j in zip(clean_table['control'], clean_table['sci'])]   
     
@@ -338,150 +433,178 @@ if visualize:
 
     
     ######## statistical significance of slopes
-    ''' 
-    interest = ['gm_normal', 'wm_normal', 'supratent_normal', 'total_normal'] # 'gm_vol', 'wm_vol', 'supratent', 'total_vol'], 
-    pt_type_pairs = [['control', 'scd'], ['normal_control', 'normal_scd'] ,['sci_control','sci_scd']]
-    fig, axs = plt.subplots(len(pt_type_pairs), len(interest), figsize=(4*len(interest),4*len(pt_type_pairs)))
-    for pt_type, axrow in zip(pt_type_pairs, axs):
+    
+    pred_vars = ['age', 'hct', 'lesion_burden', 'ox_delivery']
+    
+    for pred_var in pred_vars:
         
-        print(f'Z-testing: {pt_type}')
-        
-        exprs = [clean_table[pt] == 1 for pt in pt_type]
-        subdfs = [clean_table[expr] for expr in exprs]
-        
-        for col, ax in zip(interest, axrow):
+        print(f'\n\n\nPRED VAR = {pred_var}\n\n\n')
+    
+        interest = ['gm_normal', 'wm_normal', 'total_normal', 'icv', 'gm_vol', 'wm_vol', 'total_vol'] # 'gm_vol', 'wm_vol', 'supratent', 'total_vol'], 
+        pt_type_pairs = [['control', 'scd'], ['normal_control', 'normal_scd'] ,['sci_control','sci_scd']]
+        fig, axs = plt.subplots(len(pt_type_pairs), len(interest), figsize=(4*len(interest),4*len(pt_type_pairs)))
+        for pt_type, axrow in zip(pt_type_pairs, axs):
             
-            subcolors = ['red', 'blue']
-            int_colors = ['red', 'blue']
-            bs = []
-            ses = []
-            for subcolor, subd, icolor, patient_type in zip(subcolors, subdfs, int_colors, pt_type):
+            print(f'Z-testing: {pt_type}')
+            
+            exprs = [clean_table[pt] == 1 for pt in pt_type]
+            subdfs = [clean_table[expr] for expr in exprs]
+            
+            for col, ax in zip(interest, axrow):
                 
-                
-                exes = subd['age']
-                whys = subd[col]
-                
-
-                
-                ## BOOT STRAPPING. courtesy of pylang from stackoverflow
-                
-                x, y = exes, whys
-                
-                # Modeling with Numpy
-                def equation(a, b):
-                    """Return a 1D polynomial."""
-                    return np.polyval(a, b)
-                # Data
-                ax.plot(
-                    x, y, "o", color="#b9cfe7", markersize=4,
-                    markeredgewidth=1, markeredgecolor="black", markerfacecolor="None"
-                    )
+                subcolors = ['red', 'blue']
+                int_colors = ['red', 'blue']
+                bs = []
+                ses = []
+                for subcolor, subd, icolor, patient_type in zip(subcolors, subdfs, int_colors, pt_type):
+                    print(f'Pt type = {patient_type}')
+                    
+                    
+                    
+                    exes = subd[pred_var]
+                    whys = subd[col]
+                    
+                    hold = [(x,y) for x,y in zip(exes,whys) if not np.isnan(x)]
+                    
+                    exes = [x for x,y in hold]
+                    whys = [y for x,y in hold]
+                    
+                    if not exes:
+                        continue
+                    
+                    ## BOOT STRAPPING. courtesy of pylang from stackoverflow
+                    
+                    x, y = exes, whys
+                    
+                    # Modeling with Numpy
+                    def equation(a, b):
+                        """Return a 1D polynomial."""
+                        return np.polyval(a, b)
+                    # Data
+                    ax.plot(
+                        x, y, "o", color="#b9cfe7", markersize=4,
+                        markeredgewidth=1, markeredgecolor="black", markerfacecolor="None"
+                        )
+                    try:
+                        p, cov = np.polyfit(x, y, 1, cov=True)                     # parameters and covariance from of the fit of 1-D polynom.
+                        y_model = equation(p, x)                                   # model using the fit parameters; NOTE: parameters here are coefficients
+                        
+                        # Statistics
+                        n = len(exes)                                         # number of observations
+                        m = p.size                                                 # number of parameters
+                        dof = n - m                                                # degrees of freedom
+                        t = stats.t.ppf(0.975, n - m)                              # used for CI and PI bands
+                        
+                        # Estimates of Error in Data/Model
+                        resid = y - y_model                          
+                        chi2 = np.sum((resid / y_model)**2)                        # chi-squared; estimates error in data
+                        chi2_red = chi2 / dof                                      # reduced chi-squared; measures goodness of fit
+                        s_err = np.sqrt(np.sum(resid**2) / dof)                    # standard deviation of the error
+                        
+                        bs.append(p[0])
+                        ses.append(s_err)
+                        
+                        
+                        # Fit
+                        ax.plot(x, y_model, "-", color=icolor, linewidth=1.5, alpha=0.25)  
+                        
+                        x2 = np.linspace(np.min(x), np.max(x), 100)
+                        y2 = equation(p, x2)
+                        
+                        # Confidence Interval (select one)
+                        plot_ci_manual(t, s_err, n, x, x2, y2, ax=ax, color=icolor)
+                        #plot_ci_bootstrap(x, y, resid, ax=ax)
+                        
+                        # Prediction Interval
+                        pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))  
+                        ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--")
+                        ax.plot(x2, y2 - pi, "--", color=icolor, alpha=0.3)#, label="95% Prediction Limits")
+                        ax.plot(x2, y2 + pi, "--", color=icolor, alpha=0.3)
+                        
+                        """
+                        # Figure Modifications --------------------------------------------------------
+                        # Borders
+                        ax.spines["top"].set_color("0.5")
+                        ax.spines["bottom"].set_color("0.5")
+                        ax.spines["left"].set_color("0.5")
+                        ax.spines["right"].set_color("0.5")
+                        ax.get_xaxis().set_tick_params(direction="out")
+                        ax.get_yaxis().set_tick_params(direction="out")
+                        ax.xaxis.tick_bottom()
+                        ax.yaxis.tick_left()
+                        
+                        # Labels
+                        plt.title("Fit Plot for Weight", fontsize="14", fontweight="bold")
+                        plt.xlabel("Height")
+                        plt.ylabel("Weight")
+                        plt.xlim(np.min(x) - 1, np.max(x) + 1)
+                        
+                        # Custom legend
+                        handles, labels = ax.get_legend_handles_labels()
+                        display = (0, 1)
+                        anyArtist = plt.Line2D((0, 1), (0, 0), color="#b9cfe7")    # create custom artists
+                        legend = plt.legend(
+                            [handle for i, handle in enumerate(handles) if i in display] + [anyArtist],
+                            [label for i, label in enumerate(labels) if i in display] + ["95% Confidence Limits"],
+                            loc=9, bbox_to_anchor=(0, -0.21, 1., 0.102), ncol=3, mode="expand"
+                        )  
+                        frame = legend.get_frame().set_edgecolor("0.5")
+                        
+                        # Save Figure
+                        plt.tight_layout()
+                        plt.savefig("filename.png", bbox_extra_artists=(legend,), bbox_inches="tight")
+                        
+                        plt.show()
+                        """
+                    except np.linalg.LinAlgError:
+                        print('Linear algebra error, likely due to singular matrix')
+                        pass
+                    
+                    ax.scatter(exes, whys, color=subcolor, alpha = 0.2, s=4, label=patient_type)
+                    ax.legend()
+                   
                 try:
-                    p, cov = np.polyfit(x, y, 1, cov=True)                     # parameters and covariance from of the fit of 1-D polynom.
-                    y_model = equation(p, x)                                   # model using the fit parameters; NOTE: parameters here are coefficients
-                    
-                    # Statistics
-                    n = len(exes)                                         # number of observations
-                    m = p.size                                                 # number of parameters
-                    dof = n - m                                                # degrees of freedom
-                    t = stats.t.ppf(0.975, n - m)                              # used for CI and PI bands
-                    
-                    # Estimates of Error in Data/Model
-                    resid = y - y_model                          
-                    chi2 = np.sum((resid / y_model)**2)                        # chi-squared; estimates error in data
-                    chi2_red = chi2 / dof                                      # reduced chi-squared; measures goodness of fit
-                    s_err = np.sqrt(np.sum(resid**2) / dof)                    # standard deviation of the error
-                    
-                    bs.append(p[0])
-                    ses.append(s_err)
-                    
-                    
-                    # Fit
-                    ax.plot(x, y_model, "-", color=icolor, linewidth=1.5, alpha=0.5, label=patient_type)  
-                    
-                    x2 = np.linspace(np.min(x), np.max(x), 100)
-                    y2 = equation(p, x2)
-                    
-                    # Confidence Interval (select one)
-                    plot_ci_manual(t, s_err, n, x, x2, y2, ax=ax, color=icolor)
-                    #plot_ci_bootstrap(x, y, resid, ax=ax)
-                    
-                    # Prediction Interval
-                    pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))  
-                    ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--")
-                    ax.plot(x2, y2 - pi, "--", color=icolor, alpha=0.3)#, label="95% Prediction Limits")
-                    ax.plot(x2, y2 + pi, "--", color=icolor, alpha=0.3)
-                    
-                    """
-                    # Figure Modifications --------------------------------------------------------
-                    # Borders
-                    ax.spines["top"].set_color("0.5")
-                    ax.spines["bottom"].set_color("0.5")
-                    ax.spines["left"].set_color("0.5")
-                    ax.spines["right"].set_color("0.5")
-                    ax.get_xaxis().set_tick_params(direction="out")
-                    ax.get_yaxis().set_tick_params(direction="out")
-                    ax.xaxis.tick_bottom()
-                    ax.yaxis.tick_left()
-                    
-                    # Labels
-                    plt.title("Fit Plot for Weight", fontsize="14", fontweight="bold")
-                    plt.xlabel("Height")
-                    plt.ylabel("Weight")
-                    plt.xlim(np.min(x) - 1, np.max(x) + 1)
-                    
-                    # Custom legend
-                    handles, labels = ax.get_legend_handles_labels()
-                    display = (0, 1)
-                    anyArtist = plt.Line2D((0, 1), (0, 0), color="#b9cfe7")    # create custom artists
-                    legend = plt.legend(
-                        [handle for i, handle in enumerate(handles) if i in display] + [anyArtist],
-                        [label for i, label in enumerate(labels) if i in display] + ["95% Confidence Limits"],
-                        loc=9, bbox_to_anchor=(0, -0.21, 1., 0.102), ncol=3, mode="expand"
-                    )  
-                    frame = legend.get_frame().set_edgecolor("0.5")
-                    
-                    # Save Figure
-                    plt.tight_layout()
-                    plt.savefig("filename.png", bbox_extra_artists=(legend,), bbox_inches="tight")
-                    
-                    plt.show()
-                    """
-                except np.linalg.LinAlgError:
-                    print('Linear algebra error, likely due to singular matrix')
-                    pass
+                    z_stat = abs((bs[0] - bs[1]) / np.sqrt(ses[0]**2 + ses[1]**2))
+                except IndexError:
+                    # this happens if you only have one of SCD or control because you cant compares slopes
+                    z_stats = 'n/a'
+                # Cohen, J., Cohen, P., West, S. G., & Aiken, L. S. (2003). Applied multiple regression/correlation analysis for the behavioral sciences (3rd ed.)
+                # Paternoster, R., Brame, R., Mazerolle, P., & Piquero, A. R. (1998). Using the Correct Statistical Test for the Equality of Regression Coefficients. Criminology, 36(4), 859–866.
+                ax.set_title(f'{pt_type}: {col}\n(zstat = {round(z_stat,2)})')
                 
-                ax.scatter(exes, whys, color=subcolor, alpha = 0.4, s=4)
-                ax.legend()
-               
-            z_stat = abs((bs[0] - bs[1]) / np.sqrt(ses[0]**2 + ses[1]**2))
-            # Cohen, J., Cohen, P., West, S. G., & Aiken, L. S. (2003). Applied multiple regression/correlation analysis for the behavioral sciences (3rd ed.)
-            # Paternoster, R., Brame, R., Mazerolle, P., & Piquero, A. R. (1998). Using the Correct Statistical Test for the Equality of Regression Coefficients. Criminology, 36(4), 859–866.
-            ax.set_title(f'{pt_type}: {col}\n(zstat = {round(z_stat,2)})')
-            ax.set_xlabel('Age (years)')
-            
-            if 'norm' in col:
-                ax.set_ylabel('Normalized volume')
-            else:
-                ax.set_ylabel('Volume (cc)')
-            
-            ax.set_xlim(0,50)
-            
-            if 'norm' in col:
-                ax.set_ylim(-0.1,1.1)
-            else:
-                ax.set_ylim(0,1400)
-       
-    plt.tight_layout()
-    nice_name = os.path.join(out_folder, 'ztesting.png')
-    plt.savefig(nice_name)
-    '''
+                if 'norm' in col:
+                    ax.set_ylabel('Normalized volume')
+                    ax.set_ylim(-0.1,1.1)
+                elif 'lesion' in col:
+                    ax.set_ylabel('Lesion burden (cc)')
+                    ax.set_ylim(0,1)
+                else:
+                    ax.set_ylabel('Tissue volume (cc)')
+                    ax.set_ylim(0,1500)
+                
+                if pred_var == 'age':
+                    ax.set_xlim(0,50)
+                    ax.set_xlabel('Age (years)')
+                elif pred_var == 'hct':
+                    ax.set_xlim(0.15,0.55)
+                    ax.set_xlabel('Hematocrit')
+                elif pred_var == 'ox_delivery':
+                    ax.set_xlim(7,23)
+                    ax.set_xlabel('Oxygen delivery (mL O2 / dL blood)')
+                elif pred_var == 'lesion_burden':
+                    #ax.set_xlim(0,6e4)
+                    ax.set_xlabel('Lesion burden (cc)')
+           
+        plt.tight_layout()
+        nice_name = os.path.join(out_folder, f'sig_testing_{pred_var}.png')
+        plt.savefig(nice_name)
     
     
     
     # multiple linear regression looking at brain vol vs (age, gender, scd status)
     
-    factors = ['gm_vol', 'wm_vol', 'supratent', 'total_vol', 'gm_normal', 'wm_normal', 'supratent_normal', 'total_normal', 'etiv']
+    factors = ['gm_vol', 'wm_vol', 'total_vol', 'gm_normal', 'wm_normal', 'total_normal', 'icv', 'csf_vol', 'hct', 'lesion_burden']
+    
     """
     print('TRI')
     for f in factors:
@@ -494,129 +617,84 @@ if visualize:
         est2 = est.fit()
         print(est2.summary())
     """
-        
-        
-    print('QUAD')
-    for f in factors:
-        print(f'\n\n\nFACTOR: {f}\n')
-        X = clean_table[['age','gender','scd', 'sci']]
-        Y =  clean_table[f]
-        
-        X2 = sm.add_constant(X)
-        est = sm.OLS(Y, X2)
-        est2 = est.fit()
-        print(est2.summary())
-        
-     
-    to_explore = []
     
-    explore_factors_raw = [f for f in clean_table if '-' in f]
-    explore_factors = []
+    controlling = [
+                   ['age','gender', 'transf', 'lesion_burden', 'hct'],
+                   ['age','gender', 'transf', 'hct'],
+                   ['age','gender', 'scd', 'lesion_burden', 'hct'],
+                   ['age','gender', 'scd', 'hct'],
+                   ['age','gender', 'scd', 'lesion_burden'],
+                   ['age','gender', 'scd', 'ox_delivery'],
+                   ['age','gender', 'ox_delivery']
+                   ]
+    """
     
-    for f in explore_factors_raw:
-        fn = f+'_brainfrac'
-        clean_table[fn] = (clean_table[f]/1e3) / clean_table['total_vol']
-        explore_factors.append(f)
-        explore_factors.append(fn)
+        controlling = [['age','gender','scd', 'sci'],
+                   ['age','gender','hct'],
+                   ['age','gender','lesion_burden'],
+                   ['age','gender','lesion_burden', 'hct'],
+                   ['age','gender', 'scd', 'lesion_burden', 'hct'],
+                   ['age','gender','lesion_burden', 'hct', 'icv'],
+                   ['age','gender','scd', 'lesion_burden'],
+                   ['age','gender','scd'],
+                   ['age','gender', 'transf'],
+                   ['age','gender', 'transf', 'hct'],
+                   ['age','gender', 'scd', 'transf', 'lesion_burden', 'hct']]
+    """
     
-    
-    for f in explore_factors:
-        print(f'\n\n\nEXPLORATORY FACTOR: {f}')
-        X = clean_table[['age','gender','scd', 'sci']]
-        Y =  clean_table[f]
+    p_df = pd.DataFrame()
+    p_df_name = os.path.join(out_folder, f'pvals.csv')
         
-        X2 = sm.add_constant(X)
-        est = sm.OLS(Y, X2)
-        est2 = est.fit()
-        
-        for key, val in est2.pvalues.items():
-            if key not in ['scd']:
-                continue
-            if val <= 0.05:
-                print(f'SIGNIFICANT. {key}: pval={round(val,2)}')
-                to_explore.append((f,val))
-            elif val <= 0.1:
-                print(f'POTENTIAL. {key}: pval={round(val,2)}')
-                to_explore.append((f,val))
+    for controller in controlling:
+        summary_file = os.path.join(out_folder, f'signficance_summary_{"_".join(controller)}.txt')
+        summary = open(summary_file, 'w')
+        print('QUAD')
+        for f in factors:
+            #print(f'\n\n\nFACTOR: {f}\n')
+            
+            if f in controller:
+                continue # doesn't make sense to run a regression where something is both a predictor and the criterion
+            
+           
+            pars = controller.copy()
+            if f not in pars:
+                pars.append(f)
                 
-    
-    explore_folder = os.path.join(out_folder, 'explore')
-    for key, pval in to_explore:
-        figname = os.path.join(explore_folder, f'{key}.png')
-        
-        fig, ax = plt.subplots(1,1)
-        for status, color in zip(['control', 'scd'], ['red','blue']):
-            expr = clean_table[status] == 1
-            subdf = clean_table[expr]
-            exes = subdf['age']
-            whys = subdf[key]
-            ax.scatter(exes, whys, color=color, alpha = 0.4, s=4, label=status)
-            ax.set_title(f'{key} (pval={round(pval,4)})')
-            ax.set_xlabel('Age (years)')
-            if '_brainfrac' not in key:
-                ax.set_ylabel('Volume (cu mm)')
-            else:
-                ax.set_ylabel('Fraction of total brain volume')
-            ax.legend()
+            if 'scd' not in pars:
+                pars.append('scd')
+            
+            tabby = clean_table[pars].dropna()
+            if 'transf' in controller:
+                tabby = tabby[tabby['scd']==1] # if we're testing transfusion status, we need to evaluate SCD pts only
+            
+            X = tabby[controller]
+            Y = tabby[f]
+            
+            X2 = sm.add_constant(X)
+            est = sm.OLS(Y, X2)
+            est2 = est.fit()
+            summary.write(str(est2.summary()))
+            summary.write('\n\n\n\n--------\n--------\n\n\n\n')
+            
+            results_summary = est2.summary()
+            
+            results_as_html = results_summary.tables[1].as_html()
+            as_df = pd.read_html(results_as_html, header=0)[0]
+            as_df['criterion'] = f
+            as_df['covariates'] = '+'.join(controller)
+            
+            as_df = as_df.rename(columns={'Unnamed: 0':'predictor'})
+            
+            droppers = ['const', 'age', 'gender']
+            for d in droppers:
+                as_df = as_df[as_df['predictor'] != d]
             
             
-                
-            ## BOOT STRAPPING. courtesy of pylang from stackoverflow
-            
-            x, y = exes, whys
-            
-            # Modeling with Numpy
-            def equation(a, b):
-                """Return a 1D polynomial."""
-                return np.polyval(a, b)
-            # Data
-            ax.plot(
-                x, y, "o", color="#b9cfe7", markersize=4,
-                markeredgewidth=1, markeredgecolor="black", markerfacecolor="None"
-                )
-            try:
-                p, cov = np.polyfit(x, y, 1, cov=True)                     # parameters and covariance from of the fit of 1-D polynom.
-                y_model = equation(p, x)                                   # model using the fit parameters; NOTE: parameters here are coefficients
-                
-                # Statistics
-                n = len(exes)                                         # number of observations
-                m = p.size                                                 # number of parameters
-                dof = n - m                                                # degrees of freedom
-                t = stats.t.ppf(0.975, n - m)                              # used for CI and PI bands
-                
-                # Estimates of Error in Data/Model
-                resid = y - y_model                          
-                chi2 = np.sum((resid / y_model)**2)                        # chi-squared; estimates error in data
-                chi2_red = chi2 / dof                                      # reduced chi-squared; measures goodness of fit
-                s_err = np.sqrt(np.sum(resid**2) / dof)                    # standard deviation of the error
-                
-                
-                
-                # Fit
-                ax.plot(x, y_model, "-", color=color, linewidth=1.5, alpha=0.5) 
-                
-                x2 = np.linspace(np.min(x), np.max(x), 100)
-                y2 = equation(p, x2)
-                
-                # Confidence Interval (select one)
-                plot_ci_manual(t, s_err, n, x, x2, y2, ax=ax, color=color)
-                #plot_ci_bootstrap(x, y, resid, ax=ax)
-                
-                # Prediction Interval
-                pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))  
-                ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--")
-                ax.plot(x2, y2 - pi, "--", color=color, alpha=0.2)#, label="95% Prediction Limits")
-                ax.plot(x2, y2 + pi, "--", color=color, alpha=0.2)
-            except np.linalg.LinAlgError:
-                print('Linear algebra error, likely due to singular matrix')
-                pass
-                
-            ax.scatter(exes, whys, color=color, alpha = 0.4, s=4)
+            p_df = p_df.append(as_df, ignore_index=True)
             
             
-            plt.savefig(figname)
-        
-            
+        summary.close()
+        p_df.to_csv(p_df_name)
             
             
             
