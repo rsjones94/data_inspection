@@ -40,10 +40,12 @@ brain_vol_csv = '/Users/manusdonahue/Documents/Sky/normal_brain_vols.csv' # from
 # values originally reported as mass in g, converted to cc assuming rho = 1.04 g/cc
 
 fs_folder = '/Volumes/DonahueDataDrive/freesurfer_subjects_glymph/'
+choroid_folder = '/Users/manusdonahue/Documents/Sky/freesurfer_volume_visualization_glymph/choroid_masks'
 
-parse = True
-collate = True
-visualize = False 
+parse = False
+collate = False
+visualize = False
+generate_choroid_masks = True
 
 # os.path.basename(os.path.normpath(path))
 
@@ -254,10 +256,51 @@ if collate:
 if visualize:
     print('Visualizing')
     pass
+
+
+if generate_choroid_masks:
+    l_choroid_id = 31
+    r_choroid_id = 63
+    for i, mr in enumerate(mr_ids):
+        
+        print(f'\nGenerating choroid plexus mask: {mr} ({i+1} of {len(mr_ids)})')
+        mask_name = os.path.join(choroid_folder, f'{mr}_choroid.nii.gz')
+        brain_name = os.path.join(choroid_folder, f'{mr}_t1.nii.gz')
+        
+        fs_seg_file = os.path.join(fs_folder, mr, 'mri', 'aseg.auto.mgz')
+        fs_brain_file = os.path.join(fs_folder, mr, 'mri', 'brain.mgz')
+        
+        seg_data = nib.load(fs_seg_file)
+        brain_data = nib.load(fs_brain_file)
+        
+        seg_voxel_vol = np.product(seg_data.header.get_zooms())
+        brain_voxel_vol = np.product(seg_data.header.get_zooms())
+        
+        seg_mat = seg_data.get_fdata()
+        brain_mat = brain_data.get_fdata()
+        
+        seg_mask_l = seg_mat == l_choroid_id
+        seg_mask_r = seg_mat == r_choroid_id
+        
+        seg_mask = seg_mask_l + seg_mask_r
+        
+        new_nifti = nib.Nifti1Image(seg_mask, seg_data.affine, seg_data.header)
+        
+        nib.save(new_nifti, mask_name)
+        nib.save(brain_data, brain_name)
         
             
-            
-            
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    
             
             
 

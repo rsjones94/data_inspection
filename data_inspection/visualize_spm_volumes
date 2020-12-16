@@ -10,6 +10,7 @@ Created on Wed Aug 26 16:34:40 2020
 import os
 import re
 import shutil
+import sys
 
 import pandas as pd
 from glob import glob
@@ -33,9 +34,11 @@ import matplotlib
 
 from parse_fs_stats import parse_freesurfer_stats
 
-exclude_pts = ['SCD_C011_01', 'SCD_K003', 'SCD_K033_02', 'SCD_K061', 'SCD_K065',
-               'SCD_P007', 'SCD_P008', 'SCD_P009_01', 'SCD_P010_01', 'SCD_P012', 'SCD_P014'
+exclude_pts_bad_seg = ['SCD_C011_01', 'SCD_K003', 'SCD_K033_02', 'SCD_K061', 'SCD_K065',
+               'SCD_P007', 'SCD_P008', 'SCD_P009_01', 'SCD_P010_01', 'SCD_P012', 'SCD_P014',
                'SCD_P019', 'SCD_P021', 'SCD_TRANSF_P006_01', 'SCD_TRANSF_P007_01']
+
+exclude_pts_manual = ['SCD_C018', 'SCD_C022', 'SCD_C023', 'K001', 'SCD_K029', 'SCD_K031', 'SCD_K050', 'SCD_K061'] # based on REDCap exclusions, with some exceptions
 
 in_csv = '/Users/manusdonahue/Documents/Sky/stroke_status.csv'
 out_folder = '/Users/manusdonahue/Documents/Sky/spm_volume_visualization/'
@@ -50,13 +53,17 @@ brain_vol_csv = '/Users/manusdonahue/Documents/Sky/normal_brain_vols.csv' # from
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
 parse = False
-collate = False
+collate = True
 quality_check = False
-visualize = True 
+visualize = True
 
 # os.path.basename(os.path.normpath(path))
 
 ###########
+
+exclude_pts = []
+exclude_pts.extend(exclude_pts_bad_seg)
+exclude_pts.extend(exclude_pts_manual)
 
 
 def plot_ci_manual(t, s_err, n, x, x2, y2, ax=None, color='#b9cfe7'):
@@ -258,6 +265,7 @@ if collate:
         working['mr_id'] = pt_name
         if pt_name in exclude_pts:
             working['exclude'] = 1
+        
         working['gm_vol'] = parsed_csv.loc['gm']['value'] / 1e3
         working['wm_vol'] = parsed_csv.loc['wm']['value'] / 1e3
         working['csf_vol'] = parsed_csv.loc['csf']['value'] / 1e3
@@ -279,9 +287,10 @@ if collate:
         """
         
         stroke_overt = (cands.iloc[0][f'mh_rf_prior_stroke_overt'])
-        stroke_silent = (cands.iloc[0][f'mh_rf_prior_stroke_silent'])
+        #stroke_silent = (cands.iloc[0][f'mh_rf_prior_stroke_silent'])
+        stroke_silent = 0
         
-        if stroke_overt == 1 or stroke_silent == 1 or stroke_overt == '1' or stroke_silent == '1':
+        if stroke_overt == 1 or stroke_overt == '1':
             working['exclude'] = 1
         
         sci = (cands.iloc[0][f'outcome_mri1_sci'])
@@ -336,7 +345,6 @@ if collate:
         else:
             working['lesion_burden'] = 0
             
-        
         
                 
         out_df = out_df.append(working, ignore_index=True)
@@ -456,6 +464,7 @@ if visualize:
                 int_colors = ['red', 'blue']
                 bs = []
                 ses = []
+                ens = []
                 for subcolor, subd, icolor, patient_type in zip(subcolors, subdfs, int_colors, pt_type):
                     print(f'Pt type = {patient_type}')
                     
@@ -469,8 +478,13 @@ if visualize:
                     exes = [x for x,y in hold]
                     whys = [y for x,y in hold]
                     
+                    
+                    
                     if not exes:
+                        ens.append(0)
                         continue
+                    
+                    ens.append(len(exes))
                     
                     ## BOOT STRAPPING. courtesy of pylang from stackoverflow
                     
@@ -570,7 +584,7 @@ if visualize:
                     z_stats = 'n/a'
                 # Cohen, J., Cohen, P., West, S. G., & Aiken, L. S. (2003). Applied multiple regression/correlation analysis for the behavioral sciences (3rd ed.)
                 # Paternoster, R., Brame, R., Mazerolle, P., & Piquero, A. R. (1998). Using the Correct Statistical Test for the Equality of Regression Coefficients. Criminology, 36(4), 859–866.
-                ax.set_title(f'{pt_type}: {col}\n(zstat = {round(z_stat,2)})')
+                ax.set_title(f'Groups: {pt_type}\nn = {ens}\nCriterion: {col}\n(zstat = {round(z_stat,2)})')
                 
                 if 'norm' in col:
                     ax.set_ylabel('Normalized volume')
