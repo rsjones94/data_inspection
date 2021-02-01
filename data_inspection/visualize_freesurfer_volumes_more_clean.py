@@ -30,6 +30,7 @@ from matplotlib.offsetbox import (TextArea, DrawingArea, OffsetImage,
 from matplotlib.cbook import get_sample_data
 
 from parse_fs_stats import parse_freesurfer_stats
+from parse_sienax_stats import parse_sienax_stats
 
 exclude_pts = ['SCD_K065', 'SCD_TRANSP_P001_01']
 

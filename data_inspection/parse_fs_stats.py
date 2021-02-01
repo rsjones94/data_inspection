@@ -12,9 +12,6 @@ import os
 import pandas as pd
 import shutil
 
-stats_file = '/Users/manusdonahue/Documents/freesurfer_subjects/SCD_K001_02/stats/aseg.stats'
-output_csv = '/Users/manusdonahue/Documents/Sky/parsing_testing.csv'
-
 def parse_freesurfer_stats(stats_file, output_csv):
     
     out_df = pd.DataFrame()
