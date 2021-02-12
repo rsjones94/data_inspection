@@ -73,8 +73,8 @@ spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 parse = False
 collate = False
 quality_check = False
-visualize = True
-interrater = False
+visualize = False
+interrater = True
 graphs_w_overt = False
 
 # os.path.basename(os.path.normpath(path))
@@ -1063,6 +1063,46 @@ if interrater:
         
     triangle_path = os.path.join(interrater_folder, 'brainvol_triangle.gif')
     imageio.mimsave(triangle_path, images, duration=0.35)
+    
+    ####### static triangle plot
+    
+    cor_ex = []
+    cor_why = []
+    
+    for i in range(len(programs)):
+        cor_ex.append([exes_l[i].loc[name] for name in names])
+        cor_why.append([whys_l[i].loc[name] for name in names])
+    
+
+    fig, axs = plt.subplots(1, 1, figsize=(12,8))
+    
+    backlines = np.arange(200,2000,200)
+    for num in backlines:
+        axs.plot([0, num], [num, 0], color='red', alpha=0.4)
+    
+    
+    for p, exes, whys in zip(programs, exes_l, whys_l):
+        axs.scatter(exes,whys,label=p,alpha=0.5)
+        axs.set_title(f'Volumetric comparison')
+
+            
+        axs.set_xlim(400,1000)
+        axs.set_ylim(200,700)
+        
+        axs.set_xlabel('Gray matter volume (cc)')
+        axs.set_ylabel('White matter volume (cc)')   
+        plt.gca().set_aspect('equal', adjustable='box')
+        axs.legend()
+        plt.tight_layout()
+    
+    
+    triangle_path_static = os.path.join(interrater_folder, 'brainvol_triangle_static.png')
+    plt.savefig(triangle_path_static, dpi=200)
+    
+    
+    
+    
+    
     
     
     
