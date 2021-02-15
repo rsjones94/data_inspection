@@ -23,6 +23,7 @@ from sklearn.neighbors import LocalOutlierFactor
 from sklearn.linear_model import LinearRegression
 from sklearn import preprocessing
 import scipy
+from scipy.stats import chisquare, ttest_ind
 import statsmodels.api as sm
 import redcap
 import imageio
@@ -71,10 +72,10 @@ fs_folder = '/Volumes/DonahueDataDrive/freesurfer_subjects_scd/'
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
 parse = False
-collate = False
+collate = True
 quality_check = False
 visualize = False
-interrater = True
+interrater = False
 graphs_w_overt = False
 
 # os.path.basename(os.path.normpath(path))
@@ -318,7 +319,32 @@ if collate:
                   'control':None,
                   'lesion_burden':None,
                   'gender':None,
+                  'intracranial_stenosis':None,
+                  'hydroxyurea':None,
+                  'transf':None,
+                  'hemoglobin':None,
+                  'bmi':None,
+                  'diabetes':None,
+                  'high_cholesterol':None,
+                  'coronary_art_disease':None,
+                  'smoker':None,
                   'exclude':0}
+    
+    """
+        age
+        sex
+        race
+        infarcted - outcome_mri1_sci
+        intracranial stenosis > 50% - mra1_ic_stenosis_drp
+        hydroxyurea therapy - current_med_hu
+        chronic blood transfusions - reg_transf
+        hemoglobin (g/dL) - initial_hgb_s
+        bmi - bmi
+        diabetes mellitus - mh_rf_diab
+        coronary artery disease - mh_rf_cad
+        high cholesterol - mh_rf_high_cholest
+        smoking currently - mh_rf_act_smoke
+    """
     
     for parsed_csvs, out_folder, prog in zip(parsed_csv_list, sub_outs, programs):
         out_df = pd.DataFrame()
@@ -406,6 +432,83 @@ if collate:
             working['age'] =  float(cands.iloc[0][f'age'])
             working['race'] =  int(cands.iloc[0][f'race'])
             
+            # additional 
+            
+            try:
+                working['intracranial_stenosis'] = int(cands.iloc[0]['mra1_ic_stenosis_drp'])
+            except ValueError:
+                pass
+            
+            try:
+                working['hydroxyurea'] = int(cands.iloc[0]['current_med_hu'])
+            except ValueError:
+                pass
+            
+            try:
+                working['transf'] = int(cands.iloc[0]['reg_transf'])
+            except ValueError:
+                pass
+            
+            try:
+                working['hemoglobin'] = float(cands.iloc[0]['initial_hgb_s_value'])
+            except ValueError:
+                pass
+            
+            try:
+                working['bmi'] = float(cands.iloc[0]['bmi'])
+            except ValueError:
+                pass
+            
+            try:
+                working['diabetes'] = int(cands.iloc[0]['mh_rf_diab'])
+            except ValueError:
+                pass
+            
+            try:
+                working['high_cholesterol'] = int(cands.iloc[0]['mh_rf_high_cholest'])
+            except ValueError:
+                pass
+            
+            try:
+                working['coronary_art_disease'] = int(cands.iloc[0]['mh_rf_cad'])
+            except ValueError:
+                pass
+            
+            try:
+                working['smoker'] = int(cands.iloc[0]['mh_rf_act_smoke'])
+            except ValueError:
+                pass
+            
+
+            
+            """
+            
+                          'intracranial_stenosis':None,
+                          'hydroxyurea':None,
+                          'transf':None,
+                          'hemoglobin':None,
+                          'bmi':None,
+                          'diabetes':None,
+                          'high_cholesterol':None,
+                          'coronary_art_disease':None,
+                          'smoker':None,
+                          'exclude':0}
+            
+                age
+                sex
+                race
+                infarcted - outcome_mri1_sci
+                intracranial stenosis > 50% - mra1_ic_stenosis_drp
+                hydroxyurea therapy - current_med_hu
+                chronic blood transfusions - reg_transf
+                hemoglobin (g/dL) - initial_hgb_s_value
+                bmi - bmi
+                diabetes mellitus - mh_rf_diab
+                coronary artery disease - mh_rf_cad
+                high cholesterol - mh_rf_high_cholest
+                smoking currently - mh_rf_act_smoke
+            """
+            
             #if working['age'] >= 18:
             #   working['exclude'] = 1
             
@@ -469,6 +572,114 @@ if collate:
         out_df = out_df[blank_dict.keys()]
         out_csv = os.path.join(out_folder, f'collated.csv')
         out_df.to_csv(out_csv, index=False)
+        
+        # now make the demographic table
+        
+        the_cols = ['age', 'race', 'gender', 'sci', 'intracranial_stenosis', 'hydroxyurea',
+                    'hemoglobin', 'bmi', 'diabetes', 'high_cholesterol', 'coronary_art_disease', 'smoker']
+        all_cols = the_cols.copy()
+        all_cols.append('scd')
+        all_cols.append('exclude')
+        cut_df = out_df[all_cols]
+        cut_df = cut_df[cut_df['exclude'] == 0]
+        
+        for col in the_cols:
+            if col == 'hemoglobin':
+                continue
+            ser = cut_df[col]
+            for i, val in ser.iteritems():
+                if val == '' or val == None or np.isnan(val):
+                    ser[i] = 0
+                    
+        scd_df = cut_df[cut_df['scd']==1]
+        ctrl_df = cut_df[cut_df['scd']==0]
+        
+        categorical = ['race', 'gender', 'sci', 'intracranial_stenosis', 'hydroxyurea', 'diabetes',
+                       'high_cholesterol', 'coronary_art_disease', 'smoker']
+        categorical_names = ['Black race', 'Male sex', 'Has SCI', 'Intracranial stenosis >50%',
+                             'Hydroxyurea therapy', 'Diabetes mellitus', 'High cholesterol',
+                             'Coronary artery disease', 'Smoking currently']
+        
+        cont = ['age', 'hemoglobin', 'bmi']
+        cont_names = ['Age at MRI', 'Hemoglobin, g/dL', 'Body mass index, kg/m2']
+        
+        table_1 = pd.DataFrame()
+        
+        for col,name in zip(categorical, categorical_names):
+            
+            scd_ser = scd_df[col].dropna()
+            ctrl_ser = ctrl_df[col].dropna()
+            
+            match_num = 1
+            if col == 'race':
+                match_num = 2
+            
+            scd_d = sum(scd_ser == match_num)
+            ctrl_d = sum(ctrl_ser == match_num)
+            
+            freq_true = scd_d
+            freq_false = len(scd_ser) - freq_true
+            
+            ctrl_true = ctrl_d
+            ctrl_false = len(ctrl_ser) - ctrl_true
+            true_frac = ctrl_true / (len(ctrl_ser))
+            false_frac = ctrl_false / (len(ctrl_ser))
+            
+            expect_true = len(scd_ser) * true_frac
+            expect_false = len(scd_ser) * false_frac
+            
+            scd_perc = round((scd_d / len(scd_ser) * 100), 2)
+            ctrl_perc = round((ctrl_d / len(ctrl_ser) * 100), 2)
+            
+            chi, pval = chisquare([freq_true, freq_false], [expect_true, expect_false])
+            
+            dic = {f'SCD (n={len(scd_df)})': f'{scd_d} ({scd_perc}%)', f'Control (n={len(ctrl_df)})': f'{ctrl_d} ({ctrl_perc}%)', 'p-value':pval}
+            ser = pd.Series(dic, name=name)
+            table_1 = table_1.append(ser)
+            
+        for col,name in zip(cont, cont_names):
+            
+            scd_ser = scd_df[col].dropna()
+            ctrl_ser = ctrl_df[col].dropna()
+            
+            scd_d = np.mean(scd_ser)
+            ctrl_d = np.mean(ctrl_ser)
+            
+            t, pval = ttest_ind(scd_ser, ctrl_ser)
+            
+            scd_sd = round(np.std(scd_ser),2)
+            ctrl_sd = round(np.std(ctrl_ser),2)
+            
+            dic = {f'SCD (n={len(scd_df)})': f'{round(scd_d,2)} (sd={scd_sd})', f'Control (n={len(ctrl_df)})': f'{round(ctrl_d,2)} (sd={ctrl_sd})', 'p-value':pval}
+            ser = pd.Series(dic, name=name)
+            table_1 = table_1.append(ser)
+            
+        table_1_name = os.path.join(out_folder, f'table1.csv')
+        table_1.to_csv(table_1_name)
+            
+            
+            
+        #sys.exit()
+            
+            
+        
+        
+        """
+            scd vs control
+            age
+            sex
+            race
+            infarcted - outcome_mri1_sci
+            intracranial stenosis > 50% - mra1_ic_stenosis_drp
+            hydroxyurea therapy - current_med_hu
+            chronic blood transfusions - reg_transf
+            hemoglobin (g/dL) - initial_hgb_s
+            bmi - bmi
+            diabetes mellitus - mh_rf_diab
+            coronary artery disease - mh_rf_cad
+            high cholesterol - mh_rf_high_cholest
+            smoking currently - mh_rf_act_smoke
+        """
     
 if quality_check:
     plt.style.use('dark_background')
