@@ -34,6 +34,7 @@ from matplotlib.offsetbox import (TextArea, DrawingArea, OffsetImage,
                                   AnnotationBbox)
 from matplotlib.cbook import get_sample_data
 import matplotlib
+import matplotlib.patheffects as pe
 
 from parse_fs_stats import parse_freesurfer_stats
 from parse_sienax_stats import parse_sienax_stats
@@ -72,10 +73,10 @@ fs_folder = '/Volumes/DonahueDataDrive/freesurfer_subjects_scd/'
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
 parse = False
-collate = True
+collate = False
 quality_check = False
 visualize = False
-interrater = False
+interrater = True
 graphs_w_overt = False
 
 # os.path.basename(os.path.normpath(path))
@@ -1180,6 +1181,7 @@ if visualize:
             
 if interrater:
     
+    
     interrater_folder = os.path.join(out_folder_orig, 'interrater')
     if not os.path.exists(interrater_folder):
         os.mkdir(interrater_folder)
@@ -1197,8 +1199,7 @@ if interrater:
         inner = {'data':clean_table, 'norm':norm_name}
         data_dicts[prog] = inner
             
-        
-        
+    '''
     
     # triangle plot of raw volumes
     triangle_folder = os.path.join(interrater_folder, 'triangles')
@@ -1309,12 +1310,7 @@ if interrater:
     
     triangle_path_static = os.path.join(interrater_folder, 'brainvol_triangle_static.png')
     plt.savefig(triangle_path_static, dpi=200)
-    
-    
-    
-    
-    
-    
+
     
     
     # now plot the vscaling factor against corresponding ICVs
@@ -1391,6 +1387,131 @@ if interrater:
     
     plt.tight_layout()
     plt.savefig(scaling_path)
+    
+    '''
+    
+    
+    ##### scatter+bland-altman plots
+    
+    def bland_altman_plot(data1, data2, ax, left_loc=None, *args, **kwargs):
+        """
+        Based on Neal Fultz' answer on Stack Overflow
+        """
+        
+        data1     = np.asarray(data1)
+        data2     = np.asarray(data2)
+        mean      = np.mean([data1, data2], axis=0)
+        diff      = data1 - data2                   # Difference between data1 and data2
+        md        = np.mean(diff)                   # Mean of the difference
+        sd        = np.std(diff)            # Standard deviation of the difference
+        
+        ax.scatter(mean, diff, *args, **kwargs)
+        ax.axhline(md,           color='gray')
+        ax.axhline(md + 1.96*sd, color='gray', linestyle='--')
+        ax.axhline(md - 1.96*sd, color='gray', linestyle='--')
+        
+        if not left_loc:
+            left_loc = min(mean)
+        
+        ax.annotate(f'Mean diff: {round(md,2)}', (left_loc,md+6), path_effects=[pe.withStroke(linewidth=3, foreground="white", alpha=0.75)])
+        ax.annotate(f'-SD 1.96: {round(md-1.96*sd,2)}', (left_loc,md-1.96*sd+6), path_effects=[pe.withStroke(linewidth=3, foreground="white", alpha=0.75)])
+        ax.annotate(f'+SD 1.96: {round(md+1.96*sd,2)}', (left_loc,md+1.96*sd+6), path_effects=[pe.withStroke(linewidth=3, foreground="white", alpha=0.75)])
+        
+        #ax.text(0.5, 0.5, f'Mean diff: {round(md,2)}',
+        #      size=20,
+        #      color='white',
+        #      path_effects=[pe.withStroke(linewidth=4, foreground="red")])
+        
+        ax.set_xlabel("Average of 2 measures (cc)")
+        ax.set_ylabel("Difference between 2 measures (cc)")
+        
+    # Polynomial Regression
+    def custom_polyfit(x, y, degree):
+        """
+        Adapated frm holocronweaver's answer on stackoverflow
+        """
+        results = {}
+    
+        coeffs = np.polyfit(x, y, degree)
+    
+         # Polynomial Coefficients
+        results['polynomial'] = coeffs.tolist()
+    
+        # r-squared
+        p = np.poly1d(coeffs)
+        # fit values, and mean
+        yhat = p(x)                         # or [p(z) for z in x]
+        ybar = np.sum(y)/len(y)          # or sum(y)/len(y)
+        ssreg = np.sum((yhat-ybar)**2)   # or sum([ (yihat - ybar)**2 for yihat in yhat])
+        sstot = np.sum((y - ybar)**2)    # or sum([ (yi - ybar)**2 for yi in y])
+        results['r2'] = ssreg / sstot
+    
+        return results
+        
+    
+    vol_measures = ['total_vol', 'gm_vol', 'wm_vol']
+    formal_measures = ['Total volume', 'Gray matter volume', 'White matter volume']
+    lim_list =[[700,1500],[400,900],[200,700]]
+    lim_list_bland_ex = [[800,1400],[450,900],[250,650]]
+    lim_list_bland_why = [[-500,350],[-250,400],[-300,200]]
+    program_pairs = list(itertools.combinations(data_dicts.keys(), 2))
+    
+    for lims, measure, f_measure, bl_x, bl_y in zip(lim_list, vol_measures, formal_measures, lim_list_bland_ex, lim_list_bland_why):
+        fig, axs = plt.subplots(len(program_pairs), 2, figsize=(12,24))
+        for (p1, p2), axrow in zip(program_pairs, axs):
+            
+            exes1 = []
+            exes2 = []
+            
+            d1 = data_dicts[p1]['data']
+            d2 = data_dicts[p2]['data']
+            
+            inds = list(d1.index)
+            
+            for ind in inds:
+                exes1.append(d1[measure].loc[ind])
+                exes2.append(d2[measure].loc[ind])
+                
+            exes1 = np.array(exes1)
+            exes2 = np.array(exes2)
+            
+            axrow[0].plot([-100,10000], [-100,10000], c='gray', alpha=0.3)
+                
+            axrow[0].scatter(exes1, exes2, c='salmon', edgecolors='black', alpha=0.75)
+            axrow[0].set_xlim(lims[0], lims[1])
+            axrow[0].set_ylim(lims[0], lims[1])
+            axrow[0].set_xlabel(f'{p1} (cc)')
+            axrow[0].set_ylabel(f'{p2} (cc)')
+            axrow[0].set_aspect('equal', 'box')
+            
+            fit = custom_polyfit(exes1,exes2,1)
+            
+            coefs = fit['polynomial']
+            r2 = fit['r2']
+            
+            fit_exes = lims.copy()
+            fit_whys = [x*coefs[0] + coefs[1] for x in fit_exes]
+            axrow[0].plot(fit_exes, fit_whys, c='black')
+            
+            axrow[0].set_title(f'{p2} vs. {p1} ($r^2$ = {round(r2,2)})')
+            
+            bland_altman_plot(exes1, exes2, ax=axrow[1], c='cornflowerblue', left_loc=bl_x[0]+10, edgecolors='black', alpha=0.75)
+            axrow[1].set_xlim(bl_x[0],bl_x[1])
+            axrow[1].set_ylim(bl_y[0],bl_y[1])
+            
+        
+        fig.suptitle(f_measure)
+        fig.tight_layout(rect=[0.01, 0.03, 1, 0.95])
+        figname =  os.path.join(interrater_folder, f'agreement_{measure}.png')
+        plt.savefig(figname, dpi=400)
+        
+        
+        
+        
+    
+    
+    
+    
         
         
         
