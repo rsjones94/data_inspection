@@ -42,7 +42,8 @@ from parse_sienax_stats import parse_sienax_stats
 
 exclude_pts_bad_seg_spm = ['SCD_C011_01', 'SCD_K003', 'SCD_K033_02', 'SCD_K061', 'SCD_K065',
                'SCD_P007', 'SCD_P008', 'SCD_P009_01', 'SCD_P010_01', 'SCD_P012', 'SCD_P014',
-               'SCD_P019', 'SCD_P021', 'SCD_TRANSF_P006_01', 'SCD_TRANSF_P007_01']
+               'SCD_P019', 'SCD_P021', 'SCD_TRANSF_P006_01', 'SCD_TRANSF_P007_01', 'K011',
+               'K017', 'SCD_C038', 'SCD_K009', 'SCD_K021']
 
 exclude_pts_bad_seg_fs = ['K018_01', 'K019_01', 'K020_01', 'K021_01', 'K022_01', 'K023_01', 'K024_01']
 
@@ -54,9 +55,16 @@ exclude_pts_bad_seg_sienax = ['K001', 'SCD_C011_01', 'SCD_K003', 'SCD_K020',
                               'SCD_P010_01', 'SCD_P012', 'SCD_P014', 'SCD_P019', 'SCD_P021',
                               'SCD_TRANSF_012_01-SCD_TRANSP_P002_01', 'SCD_TRANSF_P006_01',
                               'SCD_TRANSF_P007_01', 'SCD_TRANSF_P011_01', 'SCD_TRANSF_P017_01',
-                              'SCD_TRANSF_P022_01', 'SCD_TRANSP_P004_01']
+                              'SCD_TRANSF_P022_01', 'SCD_TRANSP_P004_01', 'SCD_K004', 'SCD_K022', 'SCD_K025',
+                              'SCD_K028', 'SCD_K036']
 
 exclude_pts_manual = ['SCD_C018', 'SCD_C022', 'SCD_C023', 'K001', 'SCD_K029', 'SCD_K031', 'SCD_K050', 'SCD_K061'] # based on REDCap exclusions, with some exceptions
+
+exclude_pts_manual.extend(['SCD_K028', 'SCD_TRANSF_K017_01', 'SCD_C038', 'SCD_K064_01',
+                           'SCD_K009', 'SCD_TRANSF_K018_01', 'SCD_K042', 'SCD_K046', 'K017', 'SCD_K022',
+                           'SCD_P029', 'SCD_K004', 'SCD_K051', 'SCD_K073', 'SCD_TRANSP_P014_01', 'SCD_K025',
+                           'SCD_K021', 'SCD_K052_01', 'K011', 'SCD_K036', 'SCD_TRANSP_K001_01', 'SCD_K030',
+                           'K016', 'SCD_TRANSF_A001_01']) # pts with >2 SD disagreement between raters
 
 in_csv = '/Users/manusdonahue/Documents/Sky/stroke_status.csv'
 
@@ -73,10 +81,10 @@ fs_folder = '/Volumes/DonahueDataDrive/freesurfer_subjects_scd/'
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
 parse = False
-collate = False
+collate = True
 quality_check = False
 visualize = False
-interrater = True
+interrater = False
 graphs_w_overt = False
 
 # os.path.basename(os.path.normpath(path))
@@ -324,6 +332,8 @@ if collate:
                   'hydroxyurea':None,
                   'transf':None,
                   'hemoglobin':None,
+                  'hemoglobin_s_frac':None,
+                  'pulseox':None,
                   'bmi':None,
                   'diabetes':None,
                   'high_cholesterol':None,
@@ -385,7 +395,7 @@ if collate:
                 if f'_0{ix}' in pt_name:
                     working['exclude'] = 1
             
-            working['ox_delivery'] = float(cands.iloc[0][f'mr1_cao2'])
+            working['ox_delivery'] = float(cands.iloc[0][f'mr1_cao2'])/100
             
             """
             if in_table_indexed.loc[pt_name]['mri1_wml_drp'] == 1:
@@ -451,12 +461,22 @@ if collate:
                 pass
             
             try:
-                working['hemoglobin'] = float(cands.iloc[0]['initial_hgb_s_value'])
+                working['hemoglobin_s_frac'] = float(cands.iloc[0]['initial_hgb_s_value'])/100
+            except ValueError:
+                pass
+        
+            try:
+                working['hemoglobin'] = float(cands.iloc[0]['blood_draw_hgb1'])
             except ValueError:
                 pass
             
             try:
                 working['bmi'] = float(cands.iloc[0]['bmi'])
+            except ValueError:
+                pass
+            
+            try:
+                working['pulseox'] = float(cands.iloc[0]['mr1_pulse_ox_result'])
             except ValueError:
                 pass
             
@@ -577,7 +597,7 @@ if collate:
         # now make the demographic table
         
         the_cols = ['age', 'race', 'gender', 'sci', 'intracranial_stenosis', 'hydroxyurea',
-                    'hemoglobin', 'bmi', 'diabetes', 'high_cholesterol', 'coronary_art_disease', 'smoker']
+                    'hemoglobin', 'bmi', 'diabetes', 'high_cholesterol', 'coronary_art_disease', 'smoker', 'ox_delivery', 'hemoglobin_s_frac', 'pulseox']
         all_cols = the_cols.copy()
         all_cols.append('scd')
         all_cols.append('exclude')
@@ -601,8 +621,8 @@ if collate:
                              'Hydroxyurea therapy', 'Diabetes mellitus', 'High cholesterol',
                              'Coronary artery disease', 'Smoking currently']
         
-        cont = ['age', 'hemoglobin', 'bmi']
-        cont_names = ['Age at MRI', 'Hemoglobin, g/dL', 'Body mass index, kg/m2']
+        cont = ['age', 'ox_delivery', 'hemoglobin', 'hemoglobin_s_frac', 'pulseox', 'bmi']
+        cont_names = ['Age at MRI', 'CaO2 (mL/dL)', 'Hemoglobin, g/dL', 'Hemoglobin S fraction', 'Pulse oximeter reading', 'Body mass index, kg/m2']
         
         table_1 = pd.DataFrame()
         
@@ -685,6 +705,7 @@ if collate:
 if quality_check:
     plt.style.use('dark_background')
     for program, parent_folder, quality_folder in zip(programs, program_masters, quality_folders):
+        print(program)
         if program == 'SPM':
             files = np.array(glob(os.path.join(parent_folder, '*.nii'))) # list of all niftis
             parent_files = [f for f in files if os.path.basename(os.path.normpath(f))[0] != 'c'] # if the nifti starts with c it's a tissue probability map 
@@ -726,7 +747,7 @@ if quality_check:
                     for ax, slicer, rot in zip(axrow,slices, rots):
                         ax.axis('off')
                         t1_slice = t1_mat[slicer]
-                        t1_slice = np.rot90(t1_slice.T, rot)
+                        t1_slice = np.rot90(t1_slice, rot)
                         ax.imshow(t1_slice, cmap=matplotlib.cm.gray)
                     
                         if i == 1:
@@ -736,14 +757,15 @@ if quality_check:
                                 tissue_data = nib.load(tissue_file)
                                 tissue_mat = tissue_data.get_fdata()
                                 tissue_slice = tissue_mat[slicer]
-                                tissue_slice = np.rot90(tissue_slice.T, rot)
+                                #tissue_slice = np.rot90(tissue_slice.T, rot)
+                                tissue_slice = np.rot90(tissue_slice, rot)
                                 
                                 tissue_mask = np.ma.masked_where(tissue_slice == 0, tissue_slice)
                                 
                                 ax.imshow(tissue_mask, cmap=colormap, alpha=0.3)
                     
                 plt.tight_layout()
-                fig.savefig(figname)
+                fig.savefig(figname, dpi=400)
                 plt.close('all')
         elif program == 'SIENAX':
             folders = np.array(glob(os.path.join(parent_folder, '*/'))) # list of all folders
@@ -898,7 +920,7 @@ if visualize:
                     ax.set_xlabel('Lesion burden (cc)')
            
             plt.tight_layout()
-            plt.savefig(figname)
+            plt.savefig(figname, dpi=400)
         
         
         ######## statistical significance of slopes
@@ -1070,7 +1092,7 @@ if visualize:
                
             plt.tight_layout()
             nice_name = os.path.join(out_folder, f'sig_testing_{pred_var}.png')
-            plt.savefig(nice_name)
+            plt.savefig(nice_name, dpi=400)
         
         
         
@@ -1447,13 +1469,14 @@ if interrater:
         results['r2'] = ssreg / sstot
     
         return results
-        
+    
+    out_of_spec = []
     
     vol_measures = ['total_vol', 'gm_vol', 'wm_vol']
     formal_measures = ['Total volume', 'Gray matter volume', 'White matter volume']
     lim_list =[[700,1500],[400,900],[200,700]]
     lim_list_bland_ex = [[800,1400],[450,900],[250,650]]
-    lim_list_bland_why = [[-500,350],[-250,400],[-300,200]]
+    lim_list_bland_why = [[-200,200],[-100,200],[-150,50]]
     program_pairs = list(itertools.combinations(data_dicts.keys(), 2))
     
     for lims, measure, f_measure, bl_x, bl_y in zip(lim_list, vol_measures, formal_measures, lim_list_bland_ex, lim_list_bland_why):
@@ -1474,6 +1497,17 @@ if interrater:
                 
             exes1 = np.array(exes1)
             exes2 = np.array(exes2)
+            
+            the_diff = exes2 - exes1
+            the_mean = np.mean(the_diff)
+            the_std = np.std(the_diff)*2
+            upper_lim = the_mean + the_std
+            lower_lim = the_mean - the_std
+            
+            out_of = the_diff > upper_lim
+            outters = [name for name,boo in zip(inds,out_of) if boo]
+            
+            out_of_spec.extend(outters)
             
             axrow[0].plot([-100,10000], [-100,10000], c='gray', alpha=0.3)
                 
@@ -1505,7 +1539,7 @@ if interrater:
         figname =  os.path.join(interrater_folder, f'agreement_{measure}.png')
         plt.savefig(figname, dpi=400)
         
-        
+    unique_out = set(out_of_spec)
         
         
     
@@ -1575,7 +1609,7 @@ if graphs_w_overt:
             ax.set_ylabel('Volume (cc)')
     
     fig.tight_layout()
-    fig.savefig(figname)
+    fig.savefig(figname, dpi=400)
         
         
         
