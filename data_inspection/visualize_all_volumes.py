@@ -36,6 +36,8 @@ from matplotlib.cbook import get_sample_data
 import matplotlib
 import matplotlib.patheffects as pe
 
+from fpdf import FPDF
+
 from parse_fs_stats import parse_freesurfer_stats
 from parse_sienax_stats import parse_sienax_stats
 
@@ -81,8 +83,8 @@ fs_folder = '/Volumes/DonahueDataDrive/freesurfer_subjects_scd/'
 spm_folder = '/Users/manusdonahue/Documents/Sky/scd_t1s/'
 
 parse = False
-collate = True
-quality_check = False
+collate = False
+quality_check = True
 visualize = False
 interrater = False
 graphs_w_overt = False
@@ -704,9 +706,19 @@ if collate:
     
 if quality_check:
     plt.style.use('dark_background')
+    composite_quality_folder = os.path.join(out_folder, 'composite_quality')
+    if not os.path.exists(composite_quality_folder):
+        os.mkdir(composite_quality_folder)
+        
+    excluded_folder = os.path.join(out_folder, 'excluded_quality')
+    if not os.path.exists(excluded_folder):
+        os.mkdir(excluded_folder)
+    
+    """
     for program, parent_folder, quality_folder in zip(programs, program_masters, quality_folders):
         print(program)
         if program == 'SPM':
+            
             files = np.array(glob(os.path.join(parent_folder, '*.nii'))) # list of all niftis
             parent_files = [f for f in files if os.path.basename(os.path.normpath(f))[0] != 'c'] # if the nifti starts with c it's a tissue probability map 
             
@@ -765,9 +777,11 @@ if quality_check:
                                 ax.imshow(tissue_mask, cmap=colormap, alpha=0.3)
                     
                 plt.tight_layout()
-                fig.savefig(figname, dpi=400)
+                fig.savefig(figname, dpi=150)
                 plt.close('all')
+                
         elif program == 'SIENAX':
+            
             folders = np.array(glob(os.path.join(parent_folder, '*/'))) # list of all folders
             for i, f in enumerate(folders):
                 mr = os.path.basename(os.path.normpath(f))
@@ -776,7 +790,100 @@ if quality_check:
                 shutil.copyfile(im, target)
                 
         elif program == 'FS':
-            pass
+            
+            fs_folders = [f.path for f in os.scandir(parent_folder) if f.is_dir()]
+            mrs = [os.path.basename(f) for f in fs_folders]
+            
+            for i,(f,mr) in enumerate(zip(fs_folders,mrs)):
+                print(f'\nQuality check {mr} ({i+1} of {len(fs_folders)})')
+                mri_folder = os.path.join(f, 'mri')
+                brain_file = os.path.join(mri_folder, 'orig.mgz')
+                seg_file = os.path.join(mri_folder, 'aseg.mgz')
+                
+                brain_data = nib.load(brain_file)
+                brain_mat = brain_data.get_fdata()
+                brain_shape = brain_mat.shape
+                
+                half_x = int(brain_shape[0] / 2 + 10)
+                half_y = int(brain_shape[1] / 2 + 10)
+                half_z = int(brain_shape[2] / 2 + 10)
+                
+                slice1 = half_x,slice(None),slice(None)
+                slice2 = slice(None),half_y,slice(None)
+                slice3 = slice(None),slice(None),half_z
+                
+                slices = [slice1,slice2,slice3]
+                
+                seg_data = nib.load(seg_file)
+                seg_mat = seg_data.get_fdata()
+                seg_shape = seg_mat.shape
+                
+                half_x_seg = int(seg_shape[0] / 2 + 10)
+                half_y_seg = int(seg_shape[1] / 2 + 10)
+                half_z_seg = int(seg_shape[2] / 2 + 10)
+                
+                slice1_seg = half_x_seg,slice(None),slice(None)
+                slice2_seg = slice(None),half_y_seg,slice(None)
+                slice3_seg = slice(None),slice(None),half_z_seg
+                
+                slices_seg = [slice1_seg,slice2_seg,slice3_seg]
+                
+                fig, axs = plt.subplots(2, 3, figsize=(12, 12))
+                figname = os.path.join(quality_folder,f'{mr}.png')
+                
+                cmaps = ['Reds', 'Blues', 'Greens']
+                
+                rots = [0,1,3]
+                
+                for i,axrow in enumerate(axs):
+                    for ax, slicer, rot, slicer_seg in zip(axrow, slices, rots, slices_seg):
+                        ax.axis('off')
+                        brain_slice = brain_mat[slicer]
+                        brain_slice = np.rot90(brain_slice, rot)
+                        ax.imshow(brain_slice, cmap=matplotlib.cm.gray)
+                    
+                        if i == 1:
+                            seg_slice = seg_mat[slicer_seg]
+                            seg_slice = np.rot90(seg_slice, rot)
+                            seg_slice[seg_slice == 0] = np.nan
+                            ax.imshow(brain_slice, cmap=matplotlib.cm.gray)
+                            ax.imshow(seg_slice, cmap='gist_rainbow')
+                    
+                plt.tight_layout()
+                fig.savefig(figname, dpi=150)
+                plt.close('all')
+        
+    """
+        
+    q_files_paths = np.array(glob(os.path.join(quality_folders[0], '*.png'))) # list of all pngs
+    q_file_names = [os.path.basename(f) for f in q_files_paths]
+    
+    for i,f in enumerate(q_file_names):
+        pdf = FPDF()
+        mr = f[:-4]
+        print(f'Composite report for {mr} ({i+1} of {len(q_file_names)})')
+        for program, parent_folder, quality_folder in zip(programs, program_masters, quality_folders):
+            try:
+                print(f'\tadding program {program}')
+                
+                target_file = os.path.join(quality_folder, f)
+                
+                pdf.add_page()
+                pdf.set_xy(0, 0)
+                pdf.set_font('arial', 'B', 16)
+                pdf.cell(210, 10, f"{program}: {mr}", 0, 2, 'C')
+                pdf.image(target_file, x = None, y = None, w = 200, h = 0, type = '', link = '')
+                
+            except FileNotFoundError:
+                pass
+            
+        pdf_out = os.path.join(composite_quality_folder, f'{mr}_composite.pdf')
+        pdf.output(pdf_out, 'F')
+        
+        if mr in exclude_pts:
+            excluded_out = os.path.join(excluded_folder, f'{mr}_composite.pdf')
+            shutil.copyfile(pdf_out, excluded_out)
+                
             
             
     
