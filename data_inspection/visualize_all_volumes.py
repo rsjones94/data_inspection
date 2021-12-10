@@ -161,7 +161,7 @@ out_folder_orig = out_folder
 
 lesion_mask_folder = '/Users/manusdonahue/Documents/Sky/brain_lesion_masks/combined/'
 
-brain_vol_csv = '/Users/manusdonahue/Documents/Sky/normal_brain_vols.csv' # from Borzage, Equations to describe brain   across the continuum of human lifespan (2012)
+brain_vol_csv = '/Users/manusdonahue/Documents/Sky/normal_brain_vols.csv' # from Borzage, Equations to describe brain size across the continuum of human lifespan (2012)
 # values originally reported as mass in g, converted to cc assuming rho = 1.04 g/cc
 
 sienax_folder = '/Users/manusdonahue/Documents/Sky/sienax_segmentations/'
